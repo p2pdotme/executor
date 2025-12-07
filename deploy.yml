@@ -1,0 +1,80 @@
+version: "2.0"
+
+services:
+  redis:
+    image: redis:7-alpine
+    expose:
+      - port: 6379
+        as: 6379
+        to:
+          - service: executor
+
+  executor:
+    image: keccak002/p2pme-executor:v0.0.1
+    expose:
+      - port: 8000
+        as: 80
+        to:
+          - global: true
+    env:
+      # Core chain + contract config
+      - ALCHEMY_API_KEY=${ALCHEMY_API_KEY}
+      - DIAMOND_ADDRESS=${DIAMOND_ADDRESS}
+
+      # Executor wallets (separate keys per responsibility)
+      - TOGGLE_EXECUTOR=${TOGGLE_EXECUTOR}
+      - ASSIGN_EXECUTOR=${ASSIGN_EXECUTOR}
+      - TOGGLE_SCHEDULE_EXECUTOR=${TOGGLE_SCHEDULE_EXECUTOR}
+      - ORDER_SWEEPER_EXECUTOR=${ORDER_SWEEPER_EXECUTOR}
+      - ORDER_SCANNER_EXECUTOR=${ORDER_SCANNER_EXECUTOR}
+      - ASSIGN_DELAY_IN_SECONDS=${ASSIGN_DELAY_IN_SECONDS}
+      - SUBGRAPH_URL=${SUBGRAPH_URL}
+
+      # Alerts (Telegram)
+      - TELEGRAM_ONFAIL_BOT_TOKEN=${TELEGRAM_ONFAIL_BOT_TOKEN}
+      - TELEGRAM_ONFAIL_CHANNEL_ID=${TELEGRAM_ONFAIL_CHANNEL_ID}
+      - TELEGRAM_ONFAIL_TOPIC_ID=${TELEGRAM_ONFAIL_TOPIC_ID}
+
+      # Balance safety threshold (in ETH on Base)
+      - MIN_BASE_BALANCE_ETH=${MIN_BASE_BALANCE_ETH}
+
+profiles:
+  compute:
+    redis:
+      resources:
+        cpu:
+          units: 2
+        memory:
+          size: 2Gi
+        storage:
+          size: 2Gi
+
+    executor:
+      resources:
+        cpu:
+          units: 2.5
+        memory:
+          size: 2Gi
+        storage:
+          size: 2Gi
+
+  placement:
+    dcloud:
+      pricing:
+        redis:
+          denom: uakt
+          amount: 2000
+        executor:
+          denom: uakt
+          amount: 10000
+
+deployment:
+  redis:
+    dcloud:
+      profile: redis
+      count: 1
+
+  executor:
+    dcloud:
+      profile: executor
+      count: 1

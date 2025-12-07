@@ -1,0 +1,29 @@
+{
+    "name": "p2pme-executor",
+    "version": "1.0.0",
+    "main": "dist/index.js",
+    "type": "commonjs",
+    "scripts": {
+        "clean": "rimraf dist",
+        "dev": "tsx watch src/index.ts",
+        "build": "tsc -p tsconfig.json",
+        "start": "node --enable-source-maps dist/index.js"
+    },
+    "dependencies": {
+        "bullmq": "^5.63.1",
+        "dotenv": "^16.4.5",
+        "ethers": "^6.15.0",
+        "express": "^5.1.0",
+        "ioredis": "^5.8.2",
+        "ky": "^1.14.0",
+        "pino": "^10.1.0",
+        "pino-pretty": "^13.1.2"
+    },
+    "devDependencies": {
+        "@types/express": "^5.0.5",
+        "@types/node": "^20.12.12",
+        "rimraf": "^5.0.5",
+        "tsx": "^4.20.6",
+        "typescript": "^5.9.3"
+    }
+}
