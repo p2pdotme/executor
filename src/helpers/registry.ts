@@ -58,4 +58,42 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         description:
             'Marks merchants offline for a given currency. Executed every 30 minutes.',
     },
+
+    // 4. orderSweeper — scheduled, public callable
+    {
+        key: 'orderSweeper.sweepOrders',
+        contract: 'Diamond',
+        network: 'base-mainnet',
+        functionName: 'autoCancelExpiredOrders',
+        signature: 'autoCancelExpiredOrders(uint256[] orderIds)',
+        inputs: [
+            { name: 'orderIds', type: 'uint256[]', source: 'schedule' },
+        ],
+        trigger: {
+            type: 'schedule',
+            interval: '1m',
+        },
+        publicCallable: true,
+        description:
+            'Cancels expired orders. Executed every minute. Fetches tracked orders from database and cancels them if they are expired.',
+    },
+
+    // 5. orderScanner — scheduled, public callable
+    {
+        key: 'orderScanner.scanOrders',
+        contract: 'Diamond',
+        network: 'base-mainnet',
+        functionName: 'autoCancelExpiredOrders',
+        signature: 'autoCancelExpiredOrders(uint256[] orderIds)',
+        inputs: [
+            { name: 'orderIds', type: 'uint256[]', source: 'schedule' },
+        ],
+        trigger: {
+            type: 'schedule',
+            interval: '1m',
+        },
+        publicCallable: true,
+        description:
+            'Cancels expired orders. Executed every hour. Fetches pending orders from subgraph and cancels them if they are expired.',
+    },
 ];
