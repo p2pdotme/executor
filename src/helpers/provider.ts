@@ -3,7 +3,6 @@ import { ContractCallerConfig } from './config';
 import { logger } from './logger';
 
 const httpCache: Record<string, JsonRpcProvider> = {};
-const wsCache: Record<string, WebSocketProvider> = {};
 
 export function getHttpProvider(rpcHttp: string): JsonRpcProvider {
     if (!rpcHttp) throw new Error('missing rpcHttp');
@@ -15,22 +14,12 @@ export function getHttpProvider(rpcHttp: string): JsonRpcProvider {
 
 export function getWsProvider(rpcWs: string): WebSocketProvider {
     if (!rpcWs) throw new Error('missing rpcWs');
-    if (wsCache[rpcWs]) return wsCache[rpcWs];
     const provider = new WebSocketProvider(rpcWs);
 
-    const ws: any = (provider as any)._websocket ?? (provider as any)._ws;
-    if (ws) {
-        ws.onclose = () => {
-            logger.error('❌ ws closed: exiting (supervisor will restart)');
-            process.exit(1);
-        };
-        ws.onerror = (err: any) => {
-            logger.error('❌ ws error: exiting %s', String(err?.message));
-            process.exit(1);
-        };
-    }
+    provider.on('error', (err: any) => {
+        logger.error(`❌ ws provider error: ${String(err?.message ?? err)}`);
+    });
 
-    wsCache[rpcWs] = provider;
     return provider;
 }
 
