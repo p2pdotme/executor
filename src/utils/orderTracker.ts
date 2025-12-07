@@ -16,3 +16,8 @@ export async function getTrackedOrderIds(): Promise<string[]> {
     const ids = await connection.smembers(KEY);
     return ids ?? [];
 }
+
+export async function trackOrderIds(orderIds: string[]) {
+    if (!orderIds.length) return;
+    await connection.sadd(KEY, ...orderIds);
+}

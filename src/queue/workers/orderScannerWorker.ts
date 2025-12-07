@@ -23,7 +23,10 @@ export function startOrderScannerWorker(config: ContractCallerConfig) {
     const worker = new Worker(
         ORDER_SCANNER_QUEUE_NAME,
         async (_job) => {
-            const ids = await fetchPendingOrderIdsFromSubgraph(config);
+            const now = Math.floor(Date.now() / 1000);
+            const from = now - 3 * 60 * 60;  // now - 3 hours
+            const to = now - 30 * 60; // now - 30 minutes
+            const ids = await fetchPendingOrderIdsFromSubgraph(config, from, to);
             if (!ids.length) {
                 logger.info('🔍 order-scanner: no pending orders from subgraph');
                 return;

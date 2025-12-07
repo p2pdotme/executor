@@ -14,11 +14,16 @@ import { getBaseHttpProvider } from './helpers/provider';
 import { startListeners } from './listeners';
 import { startSchedulers } from './schedulers';
 import { getTrackedOrderIds } from './utils/orderTracker';
+import { seedPendingOrdersToOrderSweeper } from './utils/seedPendingOrders';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
 
 async function start() {
     const config = loadConfig();
+
+    // seed pending orders to order sweeper
+    await seedPendingOrdersToOrderSweeper(config);
+    logger.info('pending orders seeded to order sweeper');
 
     const app = express();
     app.get('/healthz', (_req, res) => res.status(200).send("I'm alive"));

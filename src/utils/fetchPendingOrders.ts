@@ -6,23 +6,21 @@ type SubgraphPending = {
 };
 
 export async function fetchPendingOrderIdsFromSubgraph(
-    config: ContractCallerConfig
+    config: ContractCallerConfig,
+    from: number,
+    to: number
 ): Promise<string[]> {
     if (!config.subgraphUrl) {
         logger.warn('subgraph: SUBGRAPH_URL not configured; returning empty list');
         return [];
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const placedLt = now - 30 * 60;      // now - 30 minutes
-    const placedGt = now - 3 * 60 * 60;  // now - 3 hours
-
     const query = `
-        query PendingOrders($gt: String!, $lt: String!) {
+        query PendingOrders($from: String!, $to: String!) {
             orders_collection(
             where: {
-                placed_at_gt: $gt,
-                placed_at_lt: $lt,
+                placed_at_gt: $from,
+                placed_at_lt: $to,
                 status_lt: 3
             }
             ) {
@@ -32,8 +30,8 @@ export async function fetchPendingOrderIdsFromSubgraph(
     `;
 
     const variables = {
-        gt: placedGt.toString(),
-        lt: placedLt.toString(),
+        from: from.toString(),
+        to: to.toString(),
     };
 
     try {
