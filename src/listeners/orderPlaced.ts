@@ -11,7 +11,7 @@ import { sendTelegramMessage } from '../helpers/alerts';
 const ORDER_PLACED_EVENT = 'OrderPlaced';
 
 export async function attachOrderPlacedListener(config: ContractCallerConfig) {
-    const ASSIGN_DELAY_MS = config.assignDelayInSeconds * 1000 + 2_000; // 2s buffer
+    const ASSIGN_DELAY_MS = config.assignDelayInSeconds * 1000 + 1_000; // 1s buffer
     const httpProvider = getBaseHttpProvider(config);
 
     const setup = () => {
@@ -100,7 +100,7 @@ export async function attachOrderPlacedListener(config: ContractCallerConfig) {
             config.onFailChanneld,
             config.onFailTopicId,
             '✅ WS connected: OrderPlaced listener attached',
-        ).catch(() => {});
+        ).catch(() => { });
 
         // low-level ws handle to detect close/error and reconnect
         const ws: any =
@@ -125,7 +125,7 @@ export async function attachOrderPlacedListener(config: ContractCallerConfig) {
                 config.onFailChanneld,
                 config.onFailTopicId,
                 msg,
-            ).catch(() => {});
+            ).catch(() => { });
 
             diamond.removeAllListeners(ORDER_PLACED_EVENT);
 
@@ -146,7 +146,7 @@ export async function attachOrderPlacedListener(config: ContractCallerConfig) {
                 config.onFailChanneld,
                 config.onFailTopicId,
                 msg,
-            ).catch(() => {});
+            ).catch(() => { });
 
             diamond.removeAllListeners(ORDER_PLACED_EVENT);
 
