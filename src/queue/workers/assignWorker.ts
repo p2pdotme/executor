@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { Contract } from 'ethers';
-import { ContractCallerConfig } from '../../helpers/config';
+import { AssignConfig } from '../../helpers/config';
 import { getAssignSigner } from '../../helpers/provider';
 import { logger } from '../../helpers/logger';
 import { handlers, HandlerContext } from '../handlers';
@@ -12,7 +12,7 @@ import { sendOnFail } from '../../helpers/alerts';
 const ASSIGN_QUEUE_NAME = 'assign-calls';
 const LOCK_DURATION_MS = 30_000; // 30s
 
-export function startAssignWorker(config: ContractCallerConfig) {
+export function startAssignWorker(config: AssignConfig) {
     const signer = getAssignSigner(config);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
 

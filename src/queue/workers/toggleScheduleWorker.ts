@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { Contract } from 'ethers';
-import { ContractCallerConfig } from '../../helpers/config';
+import { ToggleScheduleConfig } from '../../helpers/config';
 import { getToggleScheduleSigner } from '../../helpers/provider';
 import { logger } from '../../helpers/logger';
 import {
@@ -13,7 +13,7 @@ import { safeSend } from '../../helpers/safeSend';
 
 const LOCK_DURATION_MS = 30_000; // 30s
 
-export function startToggleScheduleWorker(config: ContractCallerConfig) {
+export function startToggleScheduleWorker(config: ToggleScheduleConfig) {
     const signer = getToggleScheduleSigner(config);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
 

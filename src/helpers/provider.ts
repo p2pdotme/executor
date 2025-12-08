@@ -1,9 +1,8 @@
 import { JsonRpcProvider, WebSocketProvider, Wallet } from 'ethers';
-import { ContractCallerConfig } from './config';
+import { AssignConfig, CommonConfig, OrderSweeperConfig, ToggleConfig, ToggleScheduleConfig } from './config';
 import { logger } from './logger';
 
 const httpCache: Record<string, JsonRpcProvider> = {};
-const wsCache: Record<string, WebSocketProvider> = {};
 
 export function getHttpProvider(rpcHttp: string): JsonRpcProvider {
     if (!rpcHttp) throw new Error('missing rpcHttp');
@@ -15,59 +14,44 @@ export function getHttpProvider(rpcHttp: string): JsonRpcProvider {
 
 export function getWsProvider(rpcWs: string): WebSocketProvider {
     if (!rpcWs) throw new Error('missing rpcWs');
-    if (wsCache[rpcWs]) return wsCache[rpcWs];
     const provider = new WebSocketProvider(rpcWs);
 
-    const ws: any = (provider as any)._websocket ?? (provider as any)._ws;
-    if (ws) {
-        ws.onclose = () => {
-            logger.error('❌ ws closed: exiting (supervisor will restart)');
-            process.exit(1);
-        };
-        ws.onerror = (err: any) => {
-            logger.error('❌ ws error: exiting %s', String(err?.message));
-            process.exit(1);
-        };
-    }
+    provider.on('error', (err: any) => {
+        logger.error(`❌ ws provider error: ${String(err?.message ?? err)}`);
+    });
 
-    wsCache[rpcWs] = provider;
     return provider;
 }
 
-export function getBaseHttpProvider(config: ContractCallerConfig): JsonRpcProvider {
+export function getBaseHttpProvider(config: CommonConfig): JsonRpcProvider {
     const url = `https://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
     return getHttpProvider(url);
 }
 
-export function getBaseWsProvider(config: ContractCallerConfig): WebSocketProvider {
+export function getBaseWsProvider(config: CommonConfig): WebSocketProvider {
     const url = `wss://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
     return getWsProvider(url);
 }
 
 // dedicated signer for ToggleMerchantsOffline
-export function getToggleSigner(config: ContractCallerConfig): Wallet {
+export function getToggleSigner(config: ToggleConfig): Wallet {
     const provider = getBaseHttpProvider(config);
     return new Wallet(config.toggleExecutor, provider);
 }
 
 // dedicated signer for AssignMerchants
-export function getAssignSigner(config: ContractCallerConfig): Wallet {
+export function getAssignSigner(config: AssignConfig): Wallet {
     const provider = getBaseHttpProvider(config);
     return new Wallet(config.assignExecutor, provider);
 }
 
 // dedicated signer for ToggleMerchantsOffline (scheduled)
-export function getToggleScheduleSigner(config: ContractCallerConfig): Wallet {
+export function getToggleScheduleSigner(config: ToggleScheduleConfig): Wallet {
     const provider = getBaseHttpProvider(config);
     return new Wallet(config.toggleScheduleExecutor, provider);
 }
 
-export function getOrderSweeperSigner(config: ContractCallerConfig): Wallet {
+export function getOrderSweeperSigner(config: OrderSweeperConfig): Wallet {
     const provider = getBaseHttpProvider(config);
     return new Wallet(config.orderSweeperExecutor, provider);
-}
-
-export function getOrderScannerSigner(config: ContractCallerConfig): Wallet {
-    const provider = getBaseHttpProvider(config);
-    return new Wallet(config.orderScannerExecutor, provider);
 }

@@ -1,5 +1,5 @@
 import ky from 'ky';
-import { ContractCallerConfig } from './config';
+import { CommonConfig } from './config';
 import { logger } from './logger';
 import { ethers, Wallet } from 'ethers';
 
@@ -26,7 +26,7 @@ export const sendTelegramMessage = async (
     }
 };
 
-export const sendOnFail = async (config: ContractCallerConfig, message: string) => {
+export const sendOnFail = async (config: CommonConfig, message: string) => {
     if (!config.onFailBotToken || !config.onFailChanneld || !config.onFailTopicId) return;
     try {
         await sendTelegramMessage(config.onFailBotToken, config.onFailChanneld, config.onFailTopicId, message);
@@ -35,7 +35,7 @@ export const sendOnFail = async (config: ContractCallerConfig, message: string) 
     }
 };
 
-export async function ensureSufficientBalance(config: ContractCallerConfig, signer: Wallet) {
+export async function ensureSufficientBalance(config: CommonConfig, signer: Wallet) {
     try {
         const provider = signer.provider;
         if (!provider) {

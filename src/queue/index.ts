@@ -1,6 +1,6 @@
 import { Queue, Job } from 'bullmq';
 import IORedis from 'ioredis';
-import { ContractCallerConfig } from '../helpers/config';
+import { AssignConfig, ToggleConfig } from '../helpers/config';
 import { ContractJobData } from './types';
 import { logger } from '../helpers/logger';
 
@@ -21,7 +21,7 @@ export let toggleScheduleQueue: Queue<ContractJobData>;
 export let orderSweeperQueue: Queue<any>;
 export let orderScannerQueue: Queue<any>;
 
-export function initToggleQueue(_config?: ContractCallerConfig) {
+export function initToggleQueue(_config?: ToggleConfig) {
     if (!toggleQueue) {
         toggleQueue = new Queue<ContractJobData>(TOGGLE_QUEUE_NAME, {
             connection,
@@ -38,7 +38,7 @@ export function initToggleQueue(_config?: ContractCallerConfig) {
     return toggleQueue;
 }
 
-export function initAssignQueue(_config?: ContractCallerConfig) {
+export function initAssignQueue(_config?: AssignConfig) {
     if (!assignQueue) {
         assignQueue = new Queue<ContractJobData>(ASSIGN_QUEUE_NAME, {
             connection,
@@ -89,7 +89,7 @@ export function initOrderScannerQueue() {
             connection,
             defaultJobOptions: {
                 removeOnComplete: true,
-                attempts: 3,
+                attempts: 1,
             },
         });
         logger.info(`queue: ${ORDER_SCANNER_QUEUE_NAME} initialised`);
@@ -100,7 +100,7 @@ export function initOrderScannerQueue() {
 
 // enqueue helpers
 export async function addToggleJob(
-    config: ContractCallerConfig,
+    config: ToggleConfig,
     name: string, // expected: 'ToggleMerchantsOffline'
     data: ContractJobData,
     opts?: { delayMs?: number; jobId?: string },
@@ -125,7 +125,7 @@ export async function addToggleJob(
 }
 
 export async function addAssignJob(
-    config: ContractCallerConfig,
+    config: AssignConfig,
     name: string, // expected: 'AssignMerchants' | 'GetOrdersById'
     data: ContractJobData,
     opts?: { delayMs?: number; jobId?: string },
@@ -147,9 +147,4 @@ export async function addAssignJob(
     );
 
     return job;
-}
-
-export async function addToggleScheduleJob(data: ContractJobData) {
-    const queue = initToggleScheduleQueue();
-    return queue.add('ToggleSchedule', data);
 }
