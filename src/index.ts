@@ -23,7 +23,7 @@ async function start() {
 
     // seed pending orders to order sweeper
     await seedPendingOrdersToOrderSweeper(config);
-    logger.info('pending orders seeded to order sweeper');
+    logger.info('🔍 order-sweeper: pending orders seeded');
 
     const app = express();
     app.get('/healthz', (_req, res) => res.status(200).send("I'm alive"));

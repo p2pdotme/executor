@@ -116,8 +116,14 @@ export async function attachOrderPlacedListener(config: ContractCallerConfig) {
             return;
         }
 
-        ws.onclose = (evt: any) => {
-            const msg = `⚠️ OrderPlaced WS closed code=${evt?.code} reason=${evt?.reason ?? ''}. Reconnecting in 5s...`;
+        // guard to avoid double reconnect (onerror + onclose)
+        let reconnectScheduled = false;
+
+        const scheduleReconnect = (reason: string) => {
+            if (reconnectScheduled) return;
+            reconnectScheduled = true;
+
+            const msg = `⚠️ OrderPlaced WS issue: ${reason}. Reconnecting in 5s...`;
             logger.error(msg);
 
             void sendTelegramMessage(
@@ -127,33 +133,38 @@ export async function attachOrderPlacedListener(config: ContractCallerConfig) {
                 msg,
             ).catch(() => { });
 
+            // remove listener for this diamond/WS instance
             diamond.removeAllListeners(ORDER_PLACED_EVENT);
 
+            // clean up the WS + provider to avoid leaks
+            try {
+                if (typeof ws.close === 'function') {
+                    ws.close();
+                }
+            } catch (e) {
+                logger.warn(`OrderPlaced: error closing ws: ${String(e)}`);
+            }
+
+            try {
+                (wsProvider as any).destroy?.();
+            } catch (e) {
+                logger.warn(`OrderPlaced: error destroying wsProvider: ${String(e)}`);
+            }
+
             setTimeout(() => {
-                logger.info('OrderPlaced: reconnecting WS listener after close');
+                logger.info('OrderPlaced: reconnecting WS listener');
                 setup();
             }, 5_000);
         };
 
+        ws.onclose = (evt: any) => {
+            const reason = `closed code=${evt?.code} reason=${evt?.reason ?? ''}`;
+            scheduleReconnect(reason);
+        };
+
         ws.onerror = (err: any) => {
-            const msg = `⚠️ OrderPlaced WS error: ${String(
-                err?.message ?? err,
-            )}. Reconnecting in 5s...`;
-            logger.error(msg);
-
-            void sendTelegramMessage(
-                config.onFailBotToken,
-                config.onFailChanneld,
-                config.onFailTopicId,
-                msg,
-            ).catch(() => { });
-
-            diamond.removeAllListeners(ORDER_PLACED_EVENT);
-
-            setTimeout(() => {
-                logger.info('OrderPlaced: reconnecting WS listener after error');
-                setup();
-            }, 5_000);
+            const reason = `error=${String(err?.message ?? err)}`;
+            scheduleReconnect(reason);
         };
     };
 
