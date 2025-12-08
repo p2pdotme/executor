@@ -76,24 +76,5 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         publicCallable: true,
         description:
             'Cancels expired orders. Executed every minute. Fetches tracked orders from database and cancels them if they are expired.',
-    },
-
-    // 5. orderScanner — scheduled, public callable
-    {
-        key: 'orderScanner.scanOrders',
-        contract: 'Diamond',
-        network: 'base-mainnet',
-        functionName: 'autoCancelExpiredOrders',
-        signature: 'autoCancelExpiredOrders(uint256[] orderIds)',
-        inputs: [
-            { name: 'orderIds', type: 'uint256[]', source: 'schedule' },
-        ],
-        trigger: {
-            type: 'schedule',
-            interval: '1m',
-        },
-        publicCallable: true,
-        description:
-            'Cancels expired orders. Executed every hour. Fetches pending orders from subgraph and cancels them if they are expired.',
-    },
+    }
 ];
