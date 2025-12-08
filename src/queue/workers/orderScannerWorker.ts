@@ -1,53 +1,37 @@
 import { Worker } from 'bullmq';
-import { Contract } from 'ethers';
-import { ContractCallerConfig } from '../../helpers/config';
-import { getOrderScannerSigner } from '../../helpers/provider';
+import { CommonConfig } from '../../helpers/config';
 import { logger } from '../../helpers/logger';
 import {
     ORDER_SCANNER_QUEUE_NAME,
     initOrderScannerQueue,
     connection,
 } from '../index';
-import { DIAMOND_ABI } from '../../helpers/abi';
-import { safeSend } from '../../helpers/safeSend';
-import { fetchPendingOrderIdsFromSubgraph } from '../../utils/fetchPendingOrders';
+import { syncOrderIds } from '../../utils/orderTracker';
 
-const LOCK_DURATION_MS = 30_000; // 30s
+const LOCK_DURATION_MS = 60_000; // 60s is more than enough for a scan
 
-export function startOrderScannerWorker(config: ContractCallerConfig) {
-    const signer = getOrderScannerSigner(config);
-    const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
-
+export function startOrderScannerWorker(config: CommonConfig) {
     initOrderScannerQueue();
 
     const worker = new Worker(
         ORDER_SCANNER_QUEUE_NAME,
         async (_job) => {
-            const now = Math.floor(Date.now() / 1000);
-            const from = now - 3 * 60 * 60;  // now - 3 hours
-            const to = now - 30 * 60; // now - 30 minutes
-            const ids = await fetchPendingOrderIdsFromSubgraph(config, from, to);
-            if (!ids.length) {
-                logger.info('🔍 order-scanner: no pending orders from subgraph');
-                return;
+            logger.info('🔍 order-scanner: starting sync tick');
+
+            try {
+                // sync last 2500 blocks
+                await syncOrderIds(config, 2500);
+
+                logger.info('✅ order-scanner: sync tick completed');
+            } catch (err: any) {
+                const msg = `❌ order-scanner: sync tick failed: ${String(
+                    err?.message ?? err,
+                )}`;
+                logger.error(msg);
+                // no sendOnFail needed if you don’t want alerts here;
+                // if you do, just import and call sendOnFail(config, msg)
+                throw err;
             }
-
-            logger.info(`🔍 order-scanner: cancelling ${ids.length} expired orders orderIds=${ids.join(',')}`);
-
-            const ok = await safeSend(
-                diamond,
-                'autoCancelExpiredOrders',
-                [ids],
-                config,
-                { source: 'scanner', count: ids.length },
-            );
-
-            if (!ok) {
-                logger.warn(
-                    `❌ order-scanner: safeSend returned false; no tx sent / reverted for ${ids.length} orders`,
-                );
-            }
-
         },
         {
             connection,
@@ -61,9 +45,7 @@ export function startOrderScannerWorker(config: ContractCallerConfig) {
     );
 
     worker.on('completed', (job) =>
-        logger.info(
-            `✅ order-scanner: completed jobId=${job.id} ${job.name}`,
-        ),
+        logger.info(`✅ order-scanner: completed jobId=${job.id} ${job.name}`),
     );
 
     worker.on('failed', (job, err) =>

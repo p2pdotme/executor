@@ -1,8 +1,8 @@
 import express from 'express';
-import dotenv from 'dotenv';
+import dotenv, { config } from 'dotenv';
 dotenv.config();
 
-import { loadConfig } from './helpers/config';
+import { loadCommonConfig, loadAssignConfig, loadOrderSweeperConfig, loadToggleConfig, loadToggleScheduleConfig } from './helpers/config';
 import { startToggleWorker } from './queue/workers/toggleWorker';
 import { startAssignWorker } from './queue/workers/assignWorker';
 import { startToggleScheduleWorker } from './queue/workers/toggleScheduleWorker';
@@ -13,16 +13,20 @@ import { CONTRACT_AUTOMATION_REGISTRY } from './helpers/registry';
 import { getBaseHttpProvider } from './helpers/provider';
 import { startListeners } from './listeners';
 import { startSchedulers } from './schedulers';
-import { getTrackedOrderIds } from './utils/orderTracker';
-import { seedPendingOrdersToOrderSweeper } from './utils/seedPendingOrders';
+import { getTrackedOrderIds, syncOrderIds } from './utils/orderTracker';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
 
 async function start() {
-    const config = loadConfig();
+    const commonConfig = loadCommonConfig();
+    const toggleConfig = loadToggleConfig();
+    const assignConfig = loadAssignConfig();
+    const toggleScheduleConfig = loadToggleScheduleConfig();
+    const orderSweeperConfig = loadOrderSweeperConfig();
 
     // seed pending orders to order sweeper
-    await seedPendingOrdersToOrderSweeper(config);
+    await syncOrderIds(commonConfig, 1000); // last 1000 blocks
+    logger.info('initial syncOrderIds done');
     logger.info('🔍 order-sweeper: pending orders seeded');
 
     const app = express();
@@ -33,7 +37,7 @@ async function start() {
         const hash = req.params.hash;
     
         try {
-            const provider = getBaseHttpProvider(config);
+            const provider = getBaseHttpProvider(commonConfig);
     
             const tx = await provider.getTransaction(hash);
             const receipt = await provider.getTransactionReceipt(hash);
@@ -109,18 +113,18 @@ async function start() {
     app.listen(PORT, () => logger.info(`http server listening on port: ${PORT}`));
 
     // ws listener
-    startListeners(config);
+    startListeners({ ...toggleConfig, ...assignConfig });
     logger.info('listeners started');
 
     startSchedulers();
     logger.info('schedulers started');
 
     // workers
-    startToggleWorker(config);
-    startAssignWorker(config);
-    startToggleScheduleWorker(config);
-    startOrderSweeperWorker(config);
-    startOrderScannerWorker(config);
+    startToggleWorker(toggleConfig);
+    startAssignWorker(assignConfig);
+    startToggleScheduleWorker(toggleScheduleConfig);
+    startOrderSweeperWorker(orderSweeperConfig);
+    startOrderScannerWorker(commonConfig);
     logger.info('workers started');
 }
 

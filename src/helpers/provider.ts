@@ -1,5 +1,5 @@
 import { JsonRpcProvider, WebSocketProvider, Wallet } from 'ethers';
-import { ContractCallerConfig } from './config';
+import { AssignConfig, CommonConfig, OrderSweeperConfig, ToggleConfig, ToggleScheduleConfig } from './config';
 import { logger } from './logger';
 
 const httpCache: Record<string, JsonRpcProvider> = {};
@@ -23,40 +23,35 @@ export function getWsProvider(rpcWs: string): WebSocketProvider {
     return provider;
 }
 
-export function getBaseHttpProvider(config: ContractCallerConfig): JsonRpcProvider {
+export function getBaseHttpProvider(config: CommonConfig): JsonRpcProvider {
     const url = `https://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
     return getHttpProvider(url);
 }
 
-export function getBaseWsProvider(config: ContractCallerConfig): WebSocketProvider {
+export function getBaseWsProvider(config: CommonConfig): WebSocketProvider {
     const url = `wss://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
     return getWsProvider(url);
 }
 
 // dedicated signer for ToggleMerchantsOffline
-export function getToggleSigner(config: ContractCallerConfig): Wallet {
+export function getToggleSigner(config: ToggleConfig): Wallet {
     const provider = getBaseHttpProvider(config);
     return new Wallet(config.toggleExecutor, provider);
 }
 
 // dedicated signer for AssignMerchants
-export function getAssignSigner(config: ContractCallerConfig): Wallet {
+export function getAssignSigner(config: AssignConfig): Wallet {
     const provider = getBaseHttpProvider(config);
     return new Wallet(config.assignExecutor, provider);
 }
 
 // dedicated signer for ToggleMerchantsOffline (scheduled)
-export function getToggleScheduleSigner(config: ContractCallerConfig): Wallet {
+export function getToggleScheduleSigner(config: ToggleScheduleConfig): Wallet {
     const provider = getBaseHttpProvider(config);
     return new Wallet(config.toggleScheduleExecutor, provider);
 }
 
-export function getOrderSweeperSigner(config: ContractCallerConfig): Wallet {
+export function getOrderSweeperSigner(config: OrderSweeperConfig): Wallet {
     const provider = getBaseHttpProvider(config);
     return new Wallet(config.orderSweeperExecutor, provider);
-}
-
-export function getOrderScannerSigner(config: ContractCallerConfig): Wallet {
-    const provider = getBaseHttpProvider(config);
-    return new Wallet(config.orderScannerExecutor, provider);
 }

@@ -95,7 +95,7 @@ const assignMerchants: ContractJobHandler = async (raw, ctx) => {
 
     if (Number(order.status) !== Number(STATUS_PLACED)) {
         logger.debug(
-            `❗ Order not PLACED. Skipping reassignment for orderId= ${orderId} (current status= ${order.status})`,
+            `❗ Skipping reassignment for orderId= ${orderId} (current status= ${order.status})`,
         );
         return true;
     }

@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { Contract } from 'ethers';
-import { ContractCallerConfig } from '../../helpers/config';
+import { ToggleConfig } from '../../helpers/config';
 import { getToggleSigner } from '../../helpers/provider';
 import { logger } from '../../helpers/logger';
 import { handlers, HandlerContext } from '../handlers';
@@ -12,7 +12,7 @@ import { sendOnFail } from '../../helpers/alerts';
 const TOGGLE_QUEUE_NAME = 'toggle-calls';
 const LOCK_DURATION_MS = 30_000; // 30s
 
-export function startToggleWorker(config: ContractCallerConfig) {
+export function startToggleWorker(config: ToggleConfig) {
     const signer = getToggleSigner(config);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
 

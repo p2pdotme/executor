@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { Contract } from 'ethers';
-import { ContractCallerConfig } from '../../helpers/config';
+import { OrderSweeperConfig } from '../../helpers/config';
 import { getOrderSweeperSigner } from '../../helpers/provider';
 import { logger } from '../../helpers/logger';
 import {
@@ -15,7 +15,7 @@ import { safeSend } from '../../helpers/safeSend';
 const LOCK_DURATION_MS = 30_000; // 30s
 const STATUS_CANCELLED_OR_COMPLETE_THRESHOLD = 3; // status >= 3 => done
 
-export function startOrderSweeperWorker(config: ContractCallerConfig) {
+export function startOrderSweeperWorker(config: OrderSweeperConfig) {
     const signer = getOrderSweeperSigner(config);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
 

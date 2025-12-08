@@ -1,5 +1,5 @@
 import { Contract } from 'ethers';
-import { ContractCallerConfig } from '../helpers/config';
+import { AssignConfig, ToggleConfig } from '../helpers/config';
 import { getBaseWsProvider, getBaseHttpProvider } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
@@ -10,7 +10,7 @@ import { sendTelegramMessage } from '../helpers/alerts';
 
 const ORDER_PLACED_EVENT = 'OrderPlaced';
 
-export async function attachOrderPlacedListener(config: ContractCallerConfig) {
+export async function attachOrderPlacedListener(config: ToggleConfig & AssignConfig) {
     const ASSIGN_DELAY_MS = config.assignDelayInSeconds * 1000 + 1_000; // 1s buffer
     const httpProvider = getBaseHttpProvider(config);
 
