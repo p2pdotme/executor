@@ -5,6 +5,8 @@ export type CommonConfig = {
     onFailBotToken: string;
     onFailChanneld: string;
     onFailTopicId: string;
+    onSuccessTopicId: string;
+    balanceTopicId: string;
 
     minBaseBalanceEth: number;
 };
@@ -40,6 +42,8 @@ export function loadCommonConfig(): CommonConfig {
     const onFailBotToken = requireEnv('TELEGRAM_ONFAIL_BOT_TOKEN');
     const onFailChanneld = requireEnv('TELEGRAM_ONFAIL_CHANNEL_ID');
     const onFailTopicId = requireEnv('TELEGRAM_ONFAIL_TOPIC_ID');
+    const onSuccessTopicId = requireEnv('TELEGRAM_ONSUCCESS_TOPIC_ID');
+    const balanceTopicId = requireEnv('TELEGRAM_BALANCE_TOPIC_ID');
 
     const minBaseBalanceEth = Number(process.env.MIN_BASE_BALANCE_ETH ?? '0.005');
     if (Number.isNaN(minBaseBalanceEth) || minBaseBalanceEth <= 0) {
@@ -52,6 +56,8 @@ export function loadCommonConfig(): CommonConfig {
         onFailBotToken,
         onFailChanneld,
         onFailTopicId,
+        onSuccessTopicId,
+        balanceTopicId,
         minBaseBalanceEth,
     };
 }
