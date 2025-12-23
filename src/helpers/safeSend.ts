@@ -103,7 +103,7 @@ export async function safeSend(
             await sendTelegramMessage(
                 config.onFailBotToken,
                 config.onFailChanneld,
-                config.onFailTopicId,
+                config.onSuccessTopicId,
                 alert,
             );
 

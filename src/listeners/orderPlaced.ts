@@ -98,7 +98,7 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
         void sendTelegramMessage(
             config.onFailBotToken,
             config.onFailChanneld,
-            config.onFailTopicId,
+            config.onSuccessTopicId,
             '✅ WS connected: OrderPlaced listener attached',
         ).catch(() => { });
 
@@ -129,7 +129,7 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
             void sendTelegramMessage(
                 config.onFailBotToken,
                 config.onFailChanneld,
-                config.onFailTopicId,
+                config.onSuccessTopicId,
                 msg,
             ).catch(() => { });
 

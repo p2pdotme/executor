@@ -10,7 +10,7 @@ services:
           - service: executor
 
   executor:
-    image: keccak002/p2pme-executor:v0.0.2
+    image: keccak002/p2pme-executor:v0.0.3
     expose:
       - port: 8000
         as: 80
@@ -32,6 +32,8 @@ services:
       - TELEGRAM_ONFAIL_BOT_TOKEN=${TELEGRAM_ONFAIL_BOT_TOKEN}
       - TELEGRAM_ONFAIL_CHANNEL_ID=${TELEGRAM_ONFAIL_CHANNEL_ID}
       - TELEGRAM_ONFAIL_TOPIC_ID=${TELEGRAM_ONFAIL_TOPIC_ID}
+      - TELEGRAM_ONSUCCESS_TOPIC_ID=${TELEGRAM_ONSUCCESS_TOPIC_ID}
+      - TELEGRAM_BALANCE_TOPIC_ID=${TELEGRAM_BALANCE_TOPIC_ID}
 
       # Balance safety threshold (in ETH on Base)
       - MIN_BASE_BALANCE_ETH=${MIN_BASE_BALANCE_ETH}

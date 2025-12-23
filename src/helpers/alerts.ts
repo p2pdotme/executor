@@ -50,7 +50,7 @@ export async function ensureSufficientBalance(config: CommonConfig, signer: Wall
             const msg = `⚠️ Low balance for ${address}: ${eth} ETH (min required ${config.minBaseBalanceEth})`;
             logger.warn(msg);
 
-            await sendOnFail(config, msg);
+            await sendTelegramMessage(config.onFailBotToken, config.onFailChanneld, config.balanceTopicId, msg);
             return;
         }
 
