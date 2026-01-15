@@ -25,7 +25,7 @@ async function start() {
     const orderSweeperConfig = loadOrderSweeperConfig();
 
     // seed pending orders to order sweeper
-    await syncOrderIds(commonConfig, 1000); // last 1000 blocks
+    await syncOrderIds(commonConfig, 10000); // last 10000 blocks
     logger.info('initial syncOrderIds done');
     logger.info('🔍 order-sweeper: pending orders seeded');
 
