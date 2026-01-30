@@ -29,8 +29,11 @@ export function startToggleScheduleWorker(config: ToggleScheduleConfig) {
             try {
                 logger.info(`▶️ toggle-schedule-worker: scanning non-eligible merchants currency=${currency}`);
 
-                const [prevs, targets] =
+                const [prevsResult, targetsResult] =
                     await diamond.getNonEligibleMerchants(currency, LIMIT);
+
+                const prevs = [...prevsResult];
+                const targets = [...targetsResult];
 
                 if (!targets || targets.length === 0) {
                     logger.debug(

@@ -26,8 +26,11 @@ const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
 
     const { currency, orderId } = data;
 
-    const [prevs, targets] =
+    const [prevsResult, targetsResult] =
         await ctx.diamond.getNonEligibleMerchants(currency, LIMIT);
+
+    const prevs = [...prevsResult];
+    const targets = [...targetsResult];
 
     if (!targets || targets.length === 0) {
         logger.debug(
