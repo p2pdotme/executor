@@ -19,71 +19,31 @@ export type ContractJobHandler =
 
 const STATUS_PLACED = 0n;
 
-// WRITE: toggleMerchantsOffline(bytes32 currency, address[] merchants)
+// WRITE: removeNonEligibleMerchants(bytes32 currency, address[] prevs, address[] targets)
 const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
+    const LIMIT = 10;
     const data = raw as ToggleOfflineJobData;
 
-    if (!data.currency || !Array.isArray(data.merchants)) {
-        logger.warn('toggleMerchantsOffline: invalid payload');
-        return true;
-    }
+    const { currency, orderId } = data;
 
-    const { currency, merchants, orderId } = data;
+    const [prevs, targets] =
+        await ctx.diamond.getNonEligibleMerchants(currency, LIMIT);
 
-    // threshold from chain, default to 12 if anything weird
-    let assignedOrdersThreshold = 12n;
-    try {
-        const rawThreshold = await ctx.diamond.getAssignedOrdersThreshold();
-        if (rawThreshold !== undefined && rawThreshold !== null) {
-            assignedOrdersThreshold = BigInt(rawThreshold);
-        }
-    } catch (err: any) {
-        logger.warn(
-            `toggleMerchantsOffline: getAssignedOrdersThreshold failed, defaulting to 12: ${String(
-                err?.message ?? err,
-            )}`,
-        );
-    }
-
-    const inactiveMerchants: string[] = [];
-
-    for (const merchant of merchants) {
-        try {
-            const rawStreak = await ctx.diamond.getPendingAssignStreak(merchant);
-            const pendingAssignStreak = BigInt(rawStreak);
-
-            if (pendingAssignStreak >= assignedOrdersThreshold) {
-                logger.warn(
-                    `⏩ toggleMerchantsOffline: merchant= ${merchant} reached threshold= ${assignedOrdersThreshold} (streak= ${pendingAssignStreak})`,
-                );
-                inactiveMerchants.push(merchant);
-            }
-        } catch (err: any) {
-            logger.warn(
-                `toggleMerchantsOffline: getPendingAssignStreak failed for merchant= ${merchant}: ${String(
-                    err?.message ?? err,
-                )}`,
-            );
-        }
-    }
-
-    if (!inactiveMerchants.length) {
+    if (!targets || targets.length === 0) {
         logger.debug(
-            `toggleMerchantsOffline: no merchants to toggle for orderId= ${orderId}; skipping tx`,
+            `toggleWorker: no non-eligible merchants found currency=${currency}`,
         );
         return true;
     }
 
-    // safeSend handles balance, gas, alerts, wait, etc.
     return safeSend(
         ctx.diamond,
-        'toggleMerchantsOffline',
-        [currency, inactiveMerchants],
+        'removeNonEligibleMerchants',
+        [currency, prevs, targets],
         ctx.config,
         { orderId },
     );
 };
-
 
 // WRITE: assignMerchants(orderId) but only if order still PLACED
 const assignMerchants: ContractJobHandler = async (raw, ctx) => {
