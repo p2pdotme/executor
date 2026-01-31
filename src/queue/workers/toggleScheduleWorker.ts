@@ -13,6 +13,8 @@ import { safeSend } from '../../helpers/safeSend';
 
 const LOCK_DURATION_MS = 30_000; // 30s
 
+const LIMIT = 300;
+
 export function startToggleScheduleWorker(config: ToggleScheduleConfig) {
     const signer = getToggleScheduleSigner(config);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
@@ -25,21 +27,32 @@ export function startToggleScheduleWorker(config: ToggleScheduleConfig) {
             const currency = job.data.currency as string;
 
             try {
-                logger.info(`▶️ toggle-schedule-worker: toggling currency= ${currency}`);
+                logger.info(`▶️ toggle-schedule-worker: scanning non-eligible merchants currency=${currency}`);
 
-                // safeSend handles balance check, gas estimate, send, wait + alerts
+                const [prevsResult, targetsResult] =
+                    await diamond.getNonEligibleMerchants(currency, LIMIT);
+
+                const prevs = [...prevsResult];
+                const targets = [...targetsResult];
+
+                if (!targets || targets.length === 0) {
+                    logger.debug(
+                        `toggle-schedule-worker: no non-eligible merchants currency=${currency}`,
+                    );
+                    return;
+                }
+
                 await safeSend(
                     diamond,
-                    'toggleMerchantsOffline',
-                    [currency, []],
+                    'removeNonEligibleMerchants',
+                    [currency, prevs, targets],
                     config,
-                    { schedule: true, currency },
+                    { schedule: true, currency, count: targets.length },
                 );
             } catch (err: any) {
-                const msg = `❌ toggle-schedule-worker error currency= ${currency}: ${err.message}`;
+                const msg = `❌ toggle-schedule-worker error currency=${currency}: ${err.message}`;
                 logger.error(msg);
-                // safeSend already sends onFail, so just rethrow for BullMQ
-                throw err;
+                throw err; // BullMQ retry
             }
         },
         {
@@ -55,13 +68,13 @@ export function startToggleScheduleWorker(config: ToggleScheduleConfig) {
 
     worker.on('completed', (job) =>
         logger.info(
-            `✅ toggle-schedule-worker: completed jobId= ${job.id} ${job.name}`,
+            `✅ toggle-schedule-worker: completed jobId=${job.id} ${job.name}`,
         ),
     );
 
     worker.on('failed', (job, err) =>
         logger.warn(
-            `❌ toggle-schedule-worker: failed jobId= ${job?.id} ${job?.name}: ${err?.message}`,
+            `❌ toggle-schedule-worker: failed jobId=${job?.id} ${job?.name}: ${err?.message}`,
         ),
     );
 

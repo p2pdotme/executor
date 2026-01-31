@@ -101,7 +101,7 @@ export function initOrderScannerQueue() {
 // enqueue helpers
 export async function addToggleJob(
     config: ToggleConfig,
-    name: string, // expected: 'ToggleMerchantsOffline'
+    name: string,
     data: ContractJobData,
     opts?: { delayMs?: number; jobId?: string },
 ) {

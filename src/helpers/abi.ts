@@ -582,6 +582,58 @@ export const DIAMOND_FUNCTIONS = [
         ],
         "stateMutability": "view",
         "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "bytes32",
+                "name": "currency",
+                "type": "bytes32"
+            },
+            {
+                "internalType": "address[]",
+                "name": "prevs",
+                "type": "address[]"
+            },
+            {
+                "internalType": "address[]",
+                "name": "targets",
+                "type": "address[]"
+            }
+        ],
+        "name": "removeNonEligibleMerchants",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "bytes32",
+                "name": "currency",
+                "type": "bytes32"
+            },
+            {
+                "internalType": "uint256",
+                "name": "limit",
+                "type": "uint256"
+            }
+        ],
+        "name": "getNonEligibleMerchants",
+        "outputs": [
+            {
+                "internalType": "address[]",
+                "name": "prevs",
+                "type": "address[]"
+            },
+            {
+                "internalType": "address[]",
+                "name": "targets",
+                "type": "address[]"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
     }
 ]
 

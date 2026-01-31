@@ -43,18 +43,31 @@ export async function ensureSufficientBalance(config: CommonConfig, signer: Wall
             return;
         }
         const address = await signer.getAddress();
-        const balanceWei = await provider.getBalance(address);
-        const eth = Number(ethers.formatEther(balanceWei));
+        const priceUpdaterAddress = '0x7055777da2E97c8c05186209cbfEe3Fc20BFd61C';
+        const arsPriceUpdaterAddress = '0x6988b3804C1Ec673775e7ED5039Ff4C1f9E373fF';
 
-        if (eth < config.minBaseBalanceEth) {
-            const msg = `⚠️ Low balance for ${address}: ${eth} ETH (min required ${config.minBaseBalanceEth})`;
-            logger.warn(msg);
+        let hasLowBalance = false;
 
-            await sendTelegramMessage(config.onFailBotToken, config.onFailChanneld, config.balanceTopicId, msg);
-            return;
+        for (const addr of [address, priceUpdaterAddress, arsPriceUpdaterAddress]) {
+            const balanceWei = await provider.getBalance(addr);
+            const eth = Number(ethers.formatEther(balanceWei));
+
+            if (eth < config.minBaseBalanceEth) {
+                hasLowBalance = true;
+                const msg = `⚠️ Low balance for ${addr}: ${eth} ETH (min required ${config.minBaseBalanceEth})`;
+                logger.warn(msg);
+                await sendTelegramMessage(
+                    config.onFailBotToken,
+                    config.onFailChanneld,
+                    config.balanceTopicId,
+                    msg
+                );
+            } else {
+                logger.debug(`balance ok for ${addr}: ${eth} ETH`);
+            }
         }
 
-        logger.debug(`balance ok for ${address}: ${eth} ETH`);
+        if (hasLowBalance) return;
 
     } catch (err: any) {
         logger.error(`balance check error: ${err.message}`);

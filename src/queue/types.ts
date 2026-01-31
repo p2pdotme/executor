@@ -7,9 +7,7 @@ export type ContractJobName =
 // Toggle-offline job payload
 export type ToggleOfflineJobData = {
     orderId: string;
-    currency: string;       // bytes32 hex string
-    merchants: string[];    // merchant addresses
-    txHash?: string;
+    currency: string; // bytes32 hex string
 };
 
 // Order-based job payload
