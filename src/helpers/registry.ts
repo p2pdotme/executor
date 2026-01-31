@@ -1,14 +1,16 @@
 export const CONTRACT_AUTOMATION_REGISTRY = [
-    // 1. toggleMerchantsOffline — event-triggered, public callable
+    // 1. Remove non-eligible merchants — event-triggered
     {
-        key: 'orderPlaced.toggleOffline',
+        key: 'orderPlaced.removeNonEligibleMerchants',
         contract: 'Diamond',
         network: 'base-mainnet',
-        functionName: 'toggleMerchantsOffline',
-        signature: 'toggleMerchantsOffline(bytes32 currency, address[] merchants)',
+        functionName: 'removeNonEligibleMerchants',
+        signature:
+            'removeNonEligibleMerchants(bytes32 currency, address[] prevs, address[] targets)',
         inputs: [
             { name: 'currency', type: 'bytes32', source: 'event' },
-            { name: 'merchants', type: 'address[]', source: 'event' },
+            { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchants' },
+            { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchants' },
         ],
         trigger: {
             type: 'event',
@@ -17,10 +19,10 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         },
         publicCallable: true,
         description:
-            'Marks merchants offline for a given currency. Executed immediately on OrderPlaced, and can also be called manually by anyone at any time.',
+            'Removes inactive or non-eligible merchants from the merchant list. Triggered immediately on OrderPlaced. Uses on-chain scanning via getNonEligibleMerchants.',
     },
 
-    // 2. assignMerchants — event-triggered, internal controlled execution
+    // 2. assignMerchants — delayed after OrderPlaced
     {
         key: 'orderPlaced.assignMerchants',
         contract: 'Diamond',
@@ -37,18 +39,21 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         },
         publicCallable: false,
         description:
-            'Assigns merchants to an order. Automatically executed 90 seconds after OrderPlaced only if the order is still in Placed state. Public callers may also execute this anytime between 90s–180s after placement if the order is still Placed.',
+            'Assigns merchants to an order if it is still in Placed state. Executed 90 seconds after OrderPlaced.',
     },
 
-    // 3. toggleMerchantsOffline — scheduled, public callable
+    // 3. Scheduled merchant cleanup — every 30 minutes
     {
-        key: 'toggleSchedule.toggleOffline',
+        key: 'toggleSchedule.removeNonEligibleMerchants',
         contract: 'Diamond',
         network: 'base-mainnet',
-        functionName: 'toggleMerchantsOffline',
-        signature: 'toggleMerchantsOffline(bytes32 currency, address[] merchants)',
+        functionName: 'removeNonEligibleMerchants',
+        signature:
+            'removeNonEligibleMerchants(bytes32 currency, address[] prevs, address[] targets)',
         inputs: [
             { name: 'currency', type: 'bytes32', source: 'schedule' },
+            { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchants' },
+            { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchants' },
         ],
         trigger: {
             type: 'schedule',
@@ -56,18 +61,18 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         },
         publicCallable: true,
         description:
-            'Marks merchants offline for a given currency. Executed every 30 minutes.',
+            'Periodically cleans up inactive or non-eligible merchants for each currency using on-chain scanning.',
     },
 
-    // 4. orderSweeper — scheduled, public callable
+    // 4. Order sweeper — cancels expired orders
     {
-        key: 'orderSweeper.sweepOrders',
+        key: 'orderSweeper.autoCancelExpiredOrders',
         contract: 'Diamond',
         network: 'base-mainnet',
         functionName: 'autoCancelExpiredOrders',
         signature: 'autoCancelExpiredOrders(uint256[] orderIds)',
         inputs: [
-            { name: 'orderIds', type: 'uint256[]', source: 'schedule' },
+            { name: 'orderIds', type: 'uint256[]', source: 'database' },
         ],
         trigger: {
             type: 'schedule',
@@ -75,6 +80,6 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         },
         publicCallable: true,
         description:
-            'Cancels expired orders. Executed every minute. Fetches tracked orders from database and cancels them if they are expired.',
-    }
+            'Cancels expired orders every minute. Uses tracked orderIds from Redis/database maintained by listeners and scanner.',
+    },
 ];

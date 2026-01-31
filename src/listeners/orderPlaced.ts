@@ -1,10 +1,10 @@
 import { Contract } from 'ethers';
 import { AssignConfig, ToggleConfig } from '../helpers/config';
-import { getBaseWsProvider, getBaseHttpProvider } from '../helpers/provider';
+import { getBaseWsProvider } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
 import { addToggleJob, addAssignJob } from '../queue';
-import { currencyMap, getMerchantAddressesFromTx, resolveOrderFromEventOrChain } from './utils';
+import { currencyMap, resolveOrderFromEventOrChain } from './utils';
 import { trackOrderId } from '../utils/orderTracker';
 import { sendTelegramMessage } from '../helpers/alerts';
 
@@ -12,7 +12,6 @@ const ORDER_PLACED_EVENT = 'OrderPlaced';
 
 export async function attachOrderPlacedListener(config: ToggleConfig & AssignConfig) {
     const ASSIGN_DELAY_MS = config.assignDelayInSeconds * 1000 + 1_000; // 1s buffer
-    const httpProvider = getBaseHttpProvider(config);
 
     const setup = () => {
         const wsProvider = getBaseWsProvider(config);
@@ -41,35 +40,19 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
                     `OrderPlaced: orderId=${orderIdStr} currency=${currencyName} txHash=${txHash}`,
                 );
 
-                // fetch merchants from tx logs using DIAMOND_ABI
-                const merchants = await getMerchantAddressesFromTx(
-                    httpProvider,
-                    txHash,
-                    config.diamondAddress,
+                await addToggleJob(
+                    config,
+                    'ToggleMerchantsOffline',
+                    {
+                        orderId: orderIdStr,
+                        currency: currencyStr,
+                    },
+                    { jobId: `toggle-${orderIdStr}`, delayMs: 0 },
                 );
-
-                if (merchants.length) {
-                    logger.info(
-                        `OrderPlaced: found ${merchants.length} merchants for orderId=${orderIdStr}`,
-                    );
-
-                    // immediate: toggleMerchantsOffline(currency, merchants)
-                    await addToggleJob(
-                        config,
-                        'ToggleMerchantsOffline',
-                        {
-                            orderId: orderIdStr,
-                            currency: currencyStr,
-                            merchants,
-                            txHash,
-                        },
-                        { jobId: `toggle-${orderIdStr}`, delayMs: 0 },
-                    );
-
-                    logger.info(
-                        `OrderPlaced: enqueued ToggleMerchantsOffline for orderId=${orderIdStr}`,
-                    );
-                }
+                
+                logger.info(
+                    `OrderPlaced: enqueued ToggleMerchantsOffline for orderId=${orderIdStr}`,
+                );                
 
                 // delayed AssignMerchants (BullMQ delay, assign queue)
                 await addAssignJob(
