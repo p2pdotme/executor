@@ -44,7 +44,7 @@ const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
         'removeNonEligibleMerchants',
         [currency, prevs, targets],
         ctx.config,
-        { orderId },
+        { orderId, merchants: targets },
     );
 };
 

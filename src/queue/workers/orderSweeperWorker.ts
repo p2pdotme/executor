@@ -91,7 +91,7 @@ export function startOrderSweeperWorker(config: OrderSweeperConfig) {
                     'autoCancelExpiredOrders',
                     [expiredIds],
                     config,
-                    { source: 'sweeper', count: expiredIds.length },
+                    { source: 'sweeper', orderIds: expiredIds },
                 );
 
                 if (ok) {
