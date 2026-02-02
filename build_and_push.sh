@@ -4,7 +4,7 @@
 set -euo pipefail
 
 IMAGE_NAME="keccak002/p2pme-executor"
-TAG="v0.1.0"
+TAG="v0.1.1"
 
 echo "📦 Creating build..."
 npm run build

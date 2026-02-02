@@ -10,7 +10,7 @@ services:
           - service: executor
 
   executor:
-    image: keccak002/p2pme-executor:v0.1.0
+    image: keccak002/p2pme-executor:v0.1.1
     expose:
       - port: 8000
         as: 80

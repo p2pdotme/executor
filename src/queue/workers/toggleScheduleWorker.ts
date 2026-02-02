@@ -10,6 +10,7 @@ import {
 } from '../index';
 import { DIAMOND_ABI } from '../../helpers/abi';
 import { safeSend } from '../../helpers/safeSend';
+import { ethers } from 'ethers';
 
 const LOCK_DURATION_MS = 30_000; // 30s
 
@@ -47,7 +48,7 @@ export function startToggleScheduleWorker(config: ToggleScheduleConfig) {
                     'removeNonEligibleMerchants',
                     [currency, prevs, targets],
                     config,
-                    { schedule: true, currency, count: targets.length },
+                    { schedule: true, currency: ethers.decodeBytes32String(currency) as string, merchants: targets },
                 );
             } catch (err: any) {
                 const msg = `❌ toggle-schedule-worker error currency=${currency}: ${err.message}`;
