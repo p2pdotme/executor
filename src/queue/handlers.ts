@@ -8,6 +8,7 @@ import {
     ToggleOfflineJobData,
 } from './types';
 import { safeSend } from '../helpers/safeSend';
+import { withTimeout } from '../helpers/provider';
 
 export type HandlerContext = {
     config: ContractCallerConfig;
@@ -27,7 +28,7 @@ const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
     const { currency, orderId } = data;
 
     const [prevsResult, targetsResult] =
-        await ctx.diamond.getNonEligibleMerchants(currency, LIMIT);
+        await withTimeout(ctx.diamond.getNonEligibleMerchants(currency, LIMIT), 5000);
 
     const prevs = [...prevsResult];
     const targets = [...targetsResult];
@@ -39,13 +40,13 @@ const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
         return true;
     }
 
-    return safeSend(
+    return withTimeout(safeSend(
         ctx.diamond,
         'removeNonEligibleMerchants',
         [currency, prevs, targets],
         ctx.config,
         { orderId, merchants: targets },
-    );
+    ));
 };
 
 // WRITE: assignMerchants(orderId) but only if order still PLACED
@@ -63,20 +64,20 @@ const assignMerchants: ContractJobHandler = async (raw, ctx) => {
         return true;
     }
 
-    return safeSend(
+    return withTimeout(safeSend(
         ctx.diamond,
         'assignMerchants',
         [orderId],
         ctx.config,
         { orderId },
-    );
+    ));
 };
 
 
 // GetOrdersById (debug)
 const getOrdersById: ContractJobHandler = async (raw, ctx) => {
     const data = raw as OrderJobData;
-    const res = await ctx.diamond.getOrdersById(data.orderId);
+    const res = await withTimeout(ctx.diamond.getOrdersById(data.orderId), 5000);
     logger.info(`getOrdersById result: ${JSON.stringify(res)}`);
     return true;
 };

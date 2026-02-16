@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { Contract } from 'ethers';
 import { ToggleScheduleConfig } from '../../helpers/config';
-import { getToggleScheduleSigner } from '../../helpers/provider';
+import { getToggleScheduleSigner, withTimeout } from '../../helpers/provider';
 import { logger } from '../../helpers/logger';
 import {
     TOGGLE_SCHEDULE_QUEUE_NAME,
@@ -43,13 +43,13 @@ export function startToggleScheduleWorker(config: ToggleScheduleConfig) {
                     return;
                 }
 
-                await safeSend(
+                await withTimeout(safeSend(
                     diamond,
                     'removeNonEligibleMerchants',
                     [currency, prevs, targets],
                     config,
                     { schedule: true, currency: ethers.decodeBytes32String(currency) as string, merchants: targets },
-                );
+                ));
             } catch (err: any) {
                 const msg = `❌ toggle-schedule-worker error currency=${currency}: ${err.message}`;
                 logger.error(msg);
