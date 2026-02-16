@@ -7,8 +7,8 @@ export const currencyMap: Record<string, string> = {
     [ethers.encodeBytes32String("IDR")]: "Idr",
     [ethers.encodeBytes32String("BRL")]: "Brl",
     [ethers.encodeBytes32String("ARS")]: "Ars",
-    [ethers.encodeBytes32String("MEX")]: "Mxn",
-    [ethers.encodeBytes32String("VEN")]: "Ves",
+    [ethers.encodeBytes32String("MEX")]: "Mex",
+    [ethers.encodeBytes32String("VEN")]: "Ven",
 };
 
 const MERCHANT_ASSIGNED_EVENT = 'MerchantAssignedNewOrder';
