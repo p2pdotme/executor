@@ -57,10 +57,16 @@ export function getOrderSweeperSigner(config: OrderSweeperConfig): Wallet {
 }
 
 export function withTimeout<T>(p: Promise<T>, ms = 20_000): Promise<T> {
-    return Promise.race([
-        p,
-        new Promise<T>((_, reject) =>
-            setTimeout(() => reject(new Error('RPC timeout')), ms)
-        ),
-    ]);
+    let timeoutId: NodeJS.Timeout;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(new Error('RPC timeout'));
+        }, ms);
+    });
+
+    return Promise.race([p, timeoutPromise])
+        .finally(() => {
+            if (timeoutId) clearTimeout(timeoutId);
+        });
 }

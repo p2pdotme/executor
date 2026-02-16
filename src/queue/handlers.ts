@@ -40,13 +40,13 @@ const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
         return true;
     }
 
-    return withTimeout(safeSend(
+    return safeSend(
         ctx.diamond,
         'removeNonEligibleMerchants',
         [currency, prevs, targets],
         ctx.config,
         { orderId, merchants: targets },
-    ));
+    );
 };
 
 // WRITE: assignMerchants(orderId) but only if order still PLACED
@@ -64,13 +64,13 @@ const assignMerchants: ContractJobHandler = async (raw, ctx) => {
         return true;
     }
 
-    return withTimeout(safeSend(
+    return safeSend(
         ctx.diamond,
         'assignMerchants',
         [orderId],
         ctx.config,
         { orderId },
-    ));
+    );
 };
 
 

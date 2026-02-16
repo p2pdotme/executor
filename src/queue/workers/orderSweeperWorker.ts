@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { Contract } from 'ethers';
 import { OrderSweeperConfig } from '../../helpers/config';
-import { getOrderSweeperSigner, withTimeout } from '../../helpers/provider';
+import { getOrderSweeperSigner } from '../../helpers/provider';
 import { logger } from '../../helpers/logger';
 import {
     ORDER_SWEEPER_QUEUE_NAME,
@@ -86,13 +86,13 @@ export function startOrderSweeperWorker(config: OrderSweeperConfig) {
             );
 
             try {
-                const ok = await withTimeout(safeSend(
+                const ok = await safeSend(
                     diamond,
                     'autoCancelExpiredOrders',
                     [expiredIds],
                     config,
                     { source: 'sweeper', orderIds: expiredIds },
-                ));
+                );
 
                 if (ok) {
                     // staticCall ok + tx accepted -> stop tracking these
