@@ -10,6 +10,8 @@ export async function startToggleSchedule() {
         IDR: ethers.encodeBytes32String('IDR'),
         BRL: ethers.encodeBytes32String('BRL'),
         ARS: ethers.encodeBytes32String('ARS'),
+        MEX: ethers.encodeBytes32String('MEX'),
+        VEN: ethers.encodeBytes32String('VEN'),
     };
 
     for (const [code, bytes32] of Object.entries(currencies)) {

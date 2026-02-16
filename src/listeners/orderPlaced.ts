@@ -1,6 +1,6 @@
 import { Contract } from 'ethers';
 import { AssignConfig, ToggleConfig } from '../helpers/config';
-import { getBaseWsProvider } from '../helpers/provider';
+import { getBaseWsProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
 import { addToggleJob, addAssignJob } from '../queue';
@@ -26,7 +26,7 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
                 const txHash = payload.log?.transactionHash;
                 if (!txHash) return;
 
-                const order = await resolveOrderFromEventOrChain(payload, diamond);
+                const order = await withTimeout(resolveOrderFromEventOrChain(payload, diamond));
                 if (!order) return;
 
                 const orderIdStr = String(order.id);
