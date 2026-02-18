@@ -25,10 +25,10 @@ const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
     const LIMIT = 10;
     const data = raw as ToggleOfflineJobData;
 
-    const { currency, orderId } = data;
+    const { currency, orderId, circleId } = data;
 
     const [prevsResult, targetsResult] =
-        await withTimeout(ctx.diamond.getNonEligibleMerchants(currency, LIMIT), 5000);
+        await withTimeout(ctx.diamond.getNonEligibleMerchantsByCircleId(circleId, LIMIT), 5000);
 
     const prevs = [...prevsResult];
     const targets = [...targetsResult];
@@ -42,10 +42,10 @@ const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
 
     return safeSend(
         ctx.diamond,
-        'removeNonEligibleMerchants',
-        [currency, prevs, targets],
+        'removeNonEligibleMerchantsByCircleId',
+        [circleId, prevs, targets],
         ctx.config,
-        { orderId, merchants: targets },
+        { orderId, circleId: circleId, merchants: targets },
     );
 };
 
