@@ -10,7 +10,7 @@ export async function safeSend(
     config: ContractCallerConfig,
     meta: Record<string, any> = {},
 ): Promise<boolean> {
-    const isDryRun = false; // for TESTING update to true
+    const isDryRun = config.dryRun;
     const signer = contract.runner as Wallet | undefined;
 
     try {
