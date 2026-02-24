@@ -10,7 +10,8 @@ export const TOGGLE_SCHEDULE_QUEUE_NAME = 'toggle-schedule-calls';
 export const ORDER_SWEEPER_QUEUE_NAME = 'order-sweeper-calls';
 export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 
-export const connection = new IORedis('redis://redis:6379', {
+const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
+export const connection = new IORedis(REDIS_URL, {
     maxRetriesPerRequest: null,
 });
 
