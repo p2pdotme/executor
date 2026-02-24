@@ -1,4 +1,3 @@
-/.vscode
 # Dependencies and build
 /node_modules
 /dist
