@@ -1,5 +1,18 @@
 /.vscode
+# Dependencies and build
 /node_modules
 /dist
+
+# Environment and secrets — never commit
 .env
+.env.local
+.env.*.local
 deploy.final.yml
+prev.yml
+*.final.yml
+
+# IDE and OS
+/.vscode
+.DS_Store
+*.log
+npm-debug.log*

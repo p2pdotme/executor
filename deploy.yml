@@ -1,3 +1,4 @@
+# Akash SDL template. Use env var substitution; do not commit a version with real secrets (e.g. deploy.final.yml).
 version: "2.0"
 
 services:
