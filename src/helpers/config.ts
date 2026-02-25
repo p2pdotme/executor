@@ -9,6 +9,8 @@ export type CommonConfig = {
     balanceTopicId: string;
 
     minBaseBalanceEth: number;
+    // When true, no transactions are sent; only staticCall simulation (for testing). Set via DRY_RUN=true */
+    dryRun: boolean;
 };
 
 export type ToggleConfig = CommonConfig & {
@@ -44,7 +46,7 @@ export function loadCommonConfig(): CommonConfig {
     const onFailTopicId = requireEnv('TELEGRAM_ONFAIL_TOPIC_ID');
     const onSuccessTopicId = requireEnv('TELEGRAM_ONSUCCESS_TOPIC_ID');
     const balanceTopicId = requireEnv('TELEGRAM_BALANCE_TOPIC_ID');
-
+    const dryRun = process.env.DRY_RUN === 'true';
     const minBaseBalanceEth = Number(process.env.MIN_BASE_BALANCE_ETH ?? '0.005');
     if (Number.isNaN(minBaseBalanceEth) || minBaseBalanceEth <= 0) {
         throw new Error('MIN_BASE_BALANCE_ETH must be a positive number');
@@ -59,6 +61,7 @@ export function loadCommonConfig(): CommonConfig {
         onSuccessTopicId,
         balanceTopicId,
         minBaseBalanceEth,
+        dryRun,
     };
 }
 
