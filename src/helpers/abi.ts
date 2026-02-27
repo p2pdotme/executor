@@ -166,6 +166,11 @@ export const DIAMOND_EVENTS = [
                         "internalType": "uint256",
                         "name": "preferredPaymentChannelConfigId",
                         "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "circleId",
+                        "type": "uint256"
                     }
                 ],
                 "indexed": false,
@@ -319,6 +324,11 @@ export const DIAMOND_EVENTS = [
                     {
                         "internalType": "uint256",
                         "name": "preferredPaymentChannelConfigId",
+                        "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "circleId",
                         "type": "uint256"
                     }
                 ],
@@ -477,6 +487,11 @@ export const DIAMOND_FUNCTIONS = [
                     {
                         "internalType": "uint256",
                         "name": "preferredPaymentChannelConfigId",
+                        "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "circleId",
                         "type": "uint256"
                     }
                 ],
