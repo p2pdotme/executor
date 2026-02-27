@@ -1,3 +1,4 @@
+# Akash SDL template. Use env var substitution; do not commit a version with real secrets (e.g. deploy.final.yml).
 version: "2.0"
 
 services:
@@ -37,6 +38,9 @@ services:
 
       # Balance safety threshold (in ETH on Base)
       - MIN_BASE_BALANCE_ETH=${MIN_BASE_BALANCE_ETH}
+
+      # Optional: set to "true" to simulate only (no transactions sent)
+      - DRY_RUN=${DRY_RUN}
 
 profiles:
   compute:
