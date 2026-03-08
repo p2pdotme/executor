@@ -1,16 +1,16 @@
 export const CONTRACT_AUTOMATION_REGISTRY = [
     // 1. Remove non-eligible merchants — event-triggered
     {
-        key: 'orderPlaced.removeNonEligibleMerchants',
+        key: 'orderPlaced.removeNonEligibleMerchantsByCircleId',
         contract: 'Diamond',
         network: 'base-mainnet',
-        functionName: 'removeNonEligibleMerchants',
+        functionName: 'removeNonEligibleMerchantsByCircleId',
         signature:
-            'removeNonEligibleMerchants(bytes32 currency, address[] prevs, address[] targets)',
+            'removeNonEligibleMerchantsByCircleId(bytes32 currency, address[] prevs, address[] targets)',
         inputs: [
             { name: 'currency', type: 'bytes32', source: 'event' },
-            { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchants' },
-            { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchants' },
+            { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
+            { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
         ],
         trigger: {
             type: 'event',
@@ -19,7 +19,7 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         },
         publicCallable: true,
         description:
-            'Removes inactive or non-eligible merchants from the merchant list. Triggered immediately on OrderPlaced. Uses on-chain scanning via getNonEligibleMerchants.',
+            'Removes inactive or non-eligible merchants from the merchant list. Triggered immediately on OrderPlaced. Uses on-chain scanning via getNonEligibleMerchantsByCircleId.',
     },
 
     // 2. assignMerchants — delayed after OrderPlaced
@@ -44,16 +44,16 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
 
     // 3. Scheduled merchant cleanup — every 30 minutes
     {
-        key: 'toggleSchedule.removeNonEligibleMerchants',
+        key: 'toggleSchedule.removeNonEligibleMerchantsByCircleId',
         contract: 'Diamond',
         network: 'base-mainnet',
-        functionName: 'removeNonEligibleMerchants',
+        functionName: 'removeNonEligibleMerchantsByCircleId',
         signature:
-            'removeNonEligibleMerchants(bytes32 currency, address[] prevs, address[] targets)',
+            'removeNonEligibleMerchantsByCircleId(bytes32 currency, address[] prevs, address[] targets)',
         inputs: [
             { name: 'currency', type: 'bytes32', source: 'schedule' },
-            { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchants' },
-            { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchants' },
+            { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
+            { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
         ],
         trigger: {
             type: 'schedule',
