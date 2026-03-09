@@ -13,6 +13,9 @@ export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
 export const connection = new IORedis(REDIS_URL, {
     maxRetriesPerRequest: null,
+    retryStrategy(times) {
+        return Math.min(times * 2000, 10000); // retry every 2–10s
+    },
 });
 
 // separate queues per wallet / responsibility
