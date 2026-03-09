@@ -6,9 +6,9 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         network: 'base-mainnet',
         functionName: 'removeNonEligibleMerchantsByCircleId',
         signature:
-            'removeNonEligibleMerchantsByCircleId(bytes32 currency, address[] prevs, address[] targets)',
+            'removeNonEligibleMerchantsByCircleId(uint256 circleId, address[] prevs, address[] targets)',
         inputs: [
-            { name: 'currency', type: 'bytes32', source: 'event' },
+            { name: 'circleId', type: 'uint256', source: 'event' },
             { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
             { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
         ],
@@ -49,9 +49,9 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
         network: 'base-mainnet',
         functionName: 'removeNonEligibleMerchantsByCircleId',
         signature:
-            'removeNonEligibleMerchantsByCircleId(bytes32 currency, address[] prevs, address[] targets)',
+            'removeNonEligibleMerchantsByCircleId(uint256 circleId, address[] prevs, address[] targets)',
         inputs: [
-            { name: 'currency', type: 'bytes32', source: 'schedule' },
+            { name: 'circleId', type: 'uint256', source: 'schedule' },
             { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
             { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
         ],
