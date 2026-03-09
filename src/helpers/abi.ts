@@ -166,6 +166,11 @@ export const DIAMOND_EVENTS = [
                         "internalType": "uint256",
                         "name": "preferredPaymentChannelConfigId",
                         "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "circleId",
+                        "type": "uint256"
                     }
                 ],
                 "indexed": false,
@@ -319,6 +324,11 @@ export const DIAMOND_EVENTS = [
                     {
                         "internalType": "uint256",
                         "name": "preferredPaymentChannelConfigId",
+                        "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "circleId",
                         "type": "uint256"
                     }
                 ],
@@ -478,6 +488,11 @@ export const DIAMOND_FUNCTIONS = [
                         "internalType": "uint256",
                         "name": "preferredPaymentChannelConfigId",
                         "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "circleId",
+                        "type": "uint256"
                     }
                 ],
                 "internalType": "struct OrderProcessorStorage.Order",
@@ -586,9 +601,9 @@ export const DIAMOND_FUNCTIONS = [
     {
         "inputs": [
             {
-                "internalType": "bytes32",
-                "name": "currency",
-                "type": "bytes32"
+                "internalType": "uint256",
+                "name": "circleId",
+                "type": "uint256"
             },
             {
                 "internalType": "address[]",
@@ -601,7 +616,7 @@ export const DIAMOND_FUNCTIONS = [
                 "type": "address[]"
             }
         ],
-        "name": "removeNonEligibleMerchants",
+        "name": "removeNonEligibleMerchantsByCircleId",
         "outputs": [],
         "stateMutability": "nonpayable",
         "type": "function"
@@ -609,9 +624,9 @@ export const DIAMOND_FUNCTIONS = [
     {
         "inputs": [
             {
-                "internalType": "bytes32",
-                "name": "currency",
-                "type": "bytes32"
+                "internalType": "uint256",
+                "name": "circleId",
+                "type": "uint256"
             },
             {
                 "internalType": "uint256",
@@ -619,7 +634,7 @@ export const DIAMOND_FUNCTIONS = [
                 "type": "uint256"
             }
         ],
-        "name": "getNonEligibleMerchants",
+        "name": "getNonEligibleMerchantsByCircleId",
         "outputs": [
             {
                 "internalType": "address[]",
@@ -634,7 +649,7 @@ export const DIAMOND_FUNCTIONS = [
         ],
         "stateMutability": "view",
         "type": "function"
-    }
+    },
 ]
 
 export const DIAMOND_ABI = [...DIAMOND_EVENTS, ...DIAMOND_FUNCTIONS] as const;
