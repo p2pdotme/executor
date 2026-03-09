@@ -56,7 +56,7 @@ export function getOrderSweeperSigner(config: OrderSweeperConfig): Wallet {
     return new Wallet(config.orderSweeperExecutor, provider);
 }
 
-export function withTimeout<T>(p: Promise<T>, ms = 20_000): Promise<T> {
+export async function withTimeout<T>(p: Promise<T>, ms = 100_000): Promise<T> {
     let timeoutId: NodeJS.Timeout;
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -65,7 +65,7 @@ export function withTimeout<T>(p: Promise<T>, ms = 20_000): Promise<T> {
         }, ms);
     });
 
-    return Promise.race([p, timeoutPromise])
+    return await Promise.race([p, timeoutPromise])
         .finally(() => {
             if (timeoutId) clearTimeout(timeoutId);
         });

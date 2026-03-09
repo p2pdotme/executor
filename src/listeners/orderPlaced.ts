@@ -36,8 +36,10 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
                 const currencyStr = String(order.currency);
                 const currencyName = currencyMap[currencyStr] ?? currencyStr;
 
+                const circleId = String(order.circleId);
+
                 logger.info(
-                    `OrderPlaced: orderId=${orderIdStr} currency=${currencyName} txHash=${txHash}`,
+                    `OrderPlaced: orderId=${orderIdStr} circleId=${circleId} currency=${currencyName} txHash=${txHash}`,
                 );
 
                 await addToggleJob(
@@ -45,6 +47,7 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
                     'ToggleMerchantsOffline',
                     {
                         orderId: orderIdStr,
+                        circleId: circleId,
                         currency: currencyStr,
                     },
                     { jobId: `toggle-${orderIdStr}`, delayMs: 0 },

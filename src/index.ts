@@ -122,7 +122,7 @@ async function start() {
     // workers
     startToggleWorker(toggleConfig);
     startAssignWorker(assignConfig);
-    startToggleScheduleWorker(toggleScheduleConfig);
+    // startToggleScheduleWorker(toggleScheduleConfig);
     startOrderSweeperWorker(orderSweeperConfig);
     startOrderScannerWorker(commonConfig);
     logger.info('workers started');
