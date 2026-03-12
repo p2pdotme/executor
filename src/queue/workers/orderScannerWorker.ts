@@ -8,7 +8,10 @@ import {
 } from '../index';
 import { syncOrderIds } from '../../utils/orderTracker';
 
-const LOCK_DURATION_MS = 60_000; // 60s is more than enough for a scan
+// BullMQ renews lock every lockDuration/2 while the job is running.
+// Truly stuck jobs get reclaimed after 3 min.
+const LOCK_DURATION_MS = 180_000; // 3 min
+const JOB_TIMEOUT_MS = 150_000;   // 2.5 min: hard deadline so worker never stalls indefinitely
 
 export function startOrderScannerWorker(config: CommonConfig) {
     initOrderScannerQueue();
@@ -16,22 +19,27 @@ export function startOrderScannerWorker(config: CommonConfig) {
     const worker = new Worker(
         ORDER_SCANNER_QUEUE_NAME,
         async (_job) => {
-            logger.info('🔍 order-scanner: starting sync tick');
+            const timeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('job timeout after ' + JOB_TIMEOUT_MS + 'ms')), JOB_TIMEOUT_MS),
+            );
 
-            try {
-                // sync last 2500 blocks
-                await syncOrderIds(config, 2500);
+            await Promise.race([
+                (async () => {
+                    logger.info('order-scanner: starting sync tick');
 
-                logger.info('✅ order-scanner: sync tick completed');
-            } catch (err: any) {
-                const msg = `❌ order-scanner: sync tick failed: ${String(
-                    err?.message ?? err,
-                )}`;
-                logger.error(msg);
-                // no sendOnFail needed if you don’t want alerts here;
-                // if you do, just import and call sendOnFail(config, msg)
-                throw err;
-            }
+                    try {
+                        // sync last 2500 blocks
+                        await syncOrderIds(config, 2500);
+
+                        logger.info('order-scanner: sync tick completed');
+                    } catch (err: any) {
+                        const msg = 'order-scanner: sync tick failed: ' + String(err?.message ?? err);
+                        logger.error(msg);
+                        throw err;
+                    }
+                })(),
+                timeout,
+            ]);
         },
         {
             connection,
@@ -41,18 +49,16 @@ export function startOrderScannerWorker(config: CommonConfig) {
     );
 
     worker.on('error', (err) =>
-        logger.error(`❌ order-scanner: worker error: ${err?.message}`),
+        logger.error('order-scanner: worker error: ' + err?.message),
     );
 
     worker.on('completed', (job) =>
-        logger.info(`✅ order-scanner: completed jobId=${job.id} ${job.name}`),
+        logger.info('order-scanner: completed jobId=' + job.id + ' ' + job.name),
     );
 
     worker.on('failed', (job, err) =>
-        logger.warn(
-            `❌ order-scanner: failed jobId=${job?.id} ${job?.name}: ${err?.message}`,
-        ),
+        logger.warn('order-scanner: failed jobId=' + job?.id + ' ' + job?.name + ': ' + err?.message),
     );
 
-    logger.info('🔍 order-scanner: started');
+    logger.info('order-scanner: started');
 }

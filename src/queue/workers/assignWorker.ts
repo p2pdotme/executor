@@ -10,7 +10,10 @@ import { DIAMOND_ABI } from '../../helpers/abi';
 import { sendOnFail } from '../../helpers/alerts';
 
 const ASSIGN_QUEUE_NAME = 'assign-calls';
-const LOCK_DURATION_MS = 30_000; // 30s
+// BullMQ renews the lock every lockDuration/2 while the job is running.
+// Truly stuck jobs get reclaimed after 3 min.
+const LOCK_DURATION_MS = 180_000; // 3 min
+const JOB_TIMEOUT_MS = 120_000;   // 2 min: hard deadline so worker never stalls indefinitely
 
 export function startAssignWorker(config: AssignConfig) {
     const signer = getAssignSigner(config);
@@ -42,8 +45,12 @@ export function startAssignWorker(config: AssignConfig) {
 
             logger.info(`▶️ assign-worker: job start ${name} jobId= ${job.id}`);
 
+            const timeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS),
+            );
+
             try {
-                const ok = await handler(job.data, ctx);
+                const ok = await Promise.race([handler(job.data, ctx), timeout]);
 
                 if (!ok) {
                     const msg = `assign-worker: handler returned false for job ${name} jobId= ${job.id}`;

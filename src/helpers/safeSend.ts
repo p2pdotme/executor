@@ -1,4 +1,4 @@
-import { Contract, Wallet } from 'ethers';
+import { Contract, Wallet, NonceManager } from 'ethers';
 import { logger } from './logger';
 import { ensureSufficientBalance, sendOnFail, sendTelegramMessage } from './alerts';
 import { ContractCallerConfig } from './config';
@@ -11,10 +11,10 @@ export async function safeSend(
     meta: Record<string, any> = {},
 ): Promise<boolean> {
     const isDryRun = config.dryRun;
-    const signer = contract.runner as Wallet | undefined;
+    const signer = contract.runner as Wallet | NonceManager | undefined;
 
     try {
-        if (!signer || !signer.provider) {
+        if (!signer || !(signer as any).provider) {
             const msg = `safeSend: missing signer/provider for fn= ${fnName} meta= ${JSON.stringify(meta)}`;
             logger.error(msg);
             await sendOnFail(config, msg);
@@ -74,6 +74,7 @@ export async function safeSend(
         );
 
         // WAIT FOR 1 CONFIRMATION
+        // We rely on BullMQ's lock renewal (every lockDuration/2) to keep the job alive for as long as it needs.
         try {
             const receipt = await tx.wait(1);
 
@@ -117,11 +118,13 @@ export async function safeSend(
                 `meta= ${JSON.stringify(meta)}: ${err.message}`;
             logger.error(baseMsg);
 
-            // if CALL_EXCEPTION && data=null -> retry
-            const isCallException = code === 'CALL_EXCEPTION';
-            const hasNullData = data == null;
+            // Retry on:
+            //   - CALL_EXCEPTION with no revert data (RPC glitch, tx still pending)
+            //   - Network / timeout errors (no code, TIMEOUT, NETWORK_ERROR, SERVER_ERROR)
+            const isCallException = code === 'CALL_EXCEPTION' && data == null;
+            const isNetworkError = !code || code === 'TIMEOUT' || code === 'NETWORK_ERROR' || code === 'SERVER_ERROR';
 
-            const shouldRetry = isCallException && hasNullData;
+            const shouldRetry = isCallException || isNetworkError;
 
             const alert = shouldRetry
                 ? `❌ ${fnName} onFail: tx wait error (will retry if attempts remain) for ${JSON.stringify(
