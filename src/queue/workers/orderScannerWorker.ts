@@ -7,6 +7,7 @@ import {
     connection,
 } from '../index';
 import { syncOrderIds } from '../../utils/orderTracker';
+import { withTimeout } from '../../helpers/provider';
 
 // BullMQ renews lock every lockDuration/2 while the job is running.
 // Truly stuck jobs get reclaimed after 3 min.
@@ -19,27 +20,16 @@ export function startOrderScannerWorker(config: CommonConfig) {
     const worker = new Worker(
         ORDER_SCANNER_QUEUE_NAME,
         async (_job) => {
-            const timeout = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('job timeout after ' + JOB_TIMEOUT_MS + 'ms')), JOB_TIMEOUT_MS),
-            );
+            logger.info('order-scanner: starting sync tick');
 
-            await Promise.race([
-                (async () => {
-                    logger.info('order-scanner: starting sync tick');
-
-                    try {
-                        // sync last 2500 blocks
-                        await syncOrderIds(config, 2500);
-
-                        logger.info('order-scanner: sync tick completed');
-                    } catch (err: any) {
-                        const msg = 'order-scanner: sync tick failed: ' + String(err?.message ?? err);
-                        logger.error(msg);
-                        throw err;
-                    }
-                })(),
-                timeout,
-            ]);
+            try {
+                await withTimeout(syncOrderIds(config, 2500), JOB_TIMEOUT_MS);
+                logger.info('order-scanner: sync tick completed');
+            } catch (err: any) {
+                const msg = 'order-scanner: sync tick failed: ' + String(err?.message ?? err);
+                logger.error(msg);
+                throw err;
+            }
         },
         {
             connection,
