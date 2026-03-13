@@ -27,8 +27,14 @@ const toggleMerchantsOffline: ContractJobHandler = async (raw, ctx) => {
 
     const { currency, orderId, circleId } = data;
 
-    const [prevsResult, targetsResult] =
-        await withTimeout(ctx.diamond.getNonEligibleMerchantsByCircleId(circleId, LIMIT), 5000);
+    let prevsResult: any[], targetsResult: any[];
+    try {
+        [prevsResult, targetsResult] =
+            await withTimeout(ctx.diamond.getNonEligibleMerchantsByCircleId(circleId, LIMIT), 5000);
+    } catch (err: any) {
+        // Timeout or RPC error — throw so BullMQ retries the job
+        throw new Error(`getNonEligibleMerchantsByCircleId failed for circleId=${circleId}: ${err.message}`);
+    }
 
     const prevs = [...prevsResult];
     const targets = [...targetsResult];
@@ -54,7 +60,12 @@ const assignMerchants: ContractJobHandler = async (raw, ctx) => {
     const data = raw as OrderJobData;
     const orderId = data.orderId;
 
-    const order = await ctx.diamond.getOrdersById(orderId);
+    let order: any;
+    try {
+        order = await withTimeout(ctx.diamond.getOrdersById(orderId), 5000);
+    } catch (err: any) {
+        throw new Error(`getOrdersById failed for orderId=${orderId}: ${err.message}`);
+    }
     if (!order) return true;
 
     if (Number(order.status) !== Number(STATUS_PLACED)) {
