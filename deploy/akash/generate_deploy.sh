@@ -1,13 +1,17 @@
 #!/bin/bash
-# Simple helper: replace ${VAR} in deploy.yml with actual values from .env
+# Substitutes ${VAR} placeholders in deploy.yml with values from .env
+# Run from the repo root: bash deploy/akash/generate_deploy.sh
 
 set -e
-ENV_FILE=".env"
-INPUT_YAML="deploy.yml"
-OUTPUT_YAML="deploy.final.yml"
+
+# Resolve paths relative to repo root (where .env lives)
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
+INPUT_YAML="$REPO_ROOT/deploy/akash/deploy.yml"
+OUTPUT_YAML="$REPO_ROOT/deploy/akash/deploy.final.yml"
 
 if [ ! -f "$ENV_FILE" ]; then
-  echo "❌ .env file not found!"
+  echo "❌ .env file not found at $ENV_FILE"
   exit 1
 fi
 

@@ -22,7 +22,7 @@ export async function safeSend(
         }
 
         // balance check (just warns + alerts, does not block)
-        await ensureSufficientBalance(config, signer);
+        if (!isDryRun) await ensureSufficientBalance(config, signer);
 
         const fn = (contract as any)[fnName];
         // DRY RUN MODE

@@ -19,15 +19,26 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
 
 async function start() {
     const commonConfig = loadCommonConfig();
+
+    if (commonConfig.dryRun) {
+        logger.warn('');
+        logger.warn('====================================================');
+        logger.warn('   DRY RUN MODE — NO TRANSACTIONS WILL BE SENT');
+        logger.warn('====================================================');
+        logger.warn('');
+    }
     const toggleConfig = loadToggleConfig();
     const assignConfig = loadAssignConfig();
     const toggleScheduleConfig = loadToggleScheduleConfig();
     const orderSweeperConfig = loadOrderSweeperConfig();
 
-    // seed pending orders to order sweeper
-    await syncOrderIds(commonConfig, 10000); // last 10000 blocks
-    logger.info('initial syncOrderIds done');
-    logger.info('🔍 order-sweeper: pending orders seeded');
+    // seed pending orders to order sweeper (skip in dry-run — no point scanning 10k blocks)
+    if (!commonConfig.dryRun) {
+        await syncOrderIds(commonConfig, 10000); // last 10000 blocks
+        logger.info('initial syncOrderIds done');
+    } else {
+        logger.info('dry-run: skipping initial syncOrderIds');
+    }
 
     const app = express();
     app.get('/healthz', (_req, res) => res.status(200).send("I'm alive"));

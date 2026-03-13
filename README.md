@@ -86,7 +86,7 @@ In `.env` for local; in Akash SDL `env:` for production.
 | `PORT` | HTTP port (default 8000). |
 | `DRY_RUN` | Set to `true` to simulate only; no transactions sent. See [Dry run mode](#dry-run-mode). |
 
-See [.env.example](.env.example).
+See [.env.example](.env.example) (root, for local dev) or [deploy/vps/.env.example](deploy/vps/.env.example) (VPS/production).
 
 ---
 
@@ -112,16 +112,18 @@ Do not commit `.env`, `deploy.final.yml`, or `prev.yml`. Use `.env.example` as a
 ## Quick Start (Local)
 
 1. `cp .env.example .env` and fill in values.
-2. Run `./test.sh` (builds app + image, runs Redis + executor with Docker Compose). Or run Redis locally, set `REDIS_URL=redis://localhost:6379`, then `npm install && npm run dev`.
+2. Run `./test.sh` (builds app + image, runs Redis + executor via `deploy/local/docker-compose.yml`). Or run Redis locally, set `REDIS_URL=redis://localhost:6379`, then `npm install && npm run dev`.
 3. Health: `GET http://localhost:8000/healthz`.
 
 ---
 
 ## How it works
+[![](https://mermaid.ink/img/pako:eNqNU8tu00AU_ZWrWbVSGtrEIYmFkBr3QaW-0kSyRM1iMr5xTJ2ZMDNuA2137IvoAlEWiB2LLpBYwJpP4QfgE7hjp6VBXTArz51zzj334VMmVIzMZ8NMnYgR1xb6a5EEOp1g4TBiPz9c_vp-AR1uEDqZEkcESiWspXysZAyBklZzYSP2bDGSJdHkg0TzyQhW9_eBJH5_fPMVcIoit0qDIAYpoCZKiXcnTjUKmyoJ2wd_o2GvoF9-ghAHPUqOFrZTY5HosKdj1PsZFxgDHqO0c4K94Ilzf_EFemKEcZ6hNmBOECdE_fENjODyXxPdwzLdNXTyLNvpQjfHHA1YlSQZOhY3Jk1kwb9P6o5W6LJfvXe9C5U-ctn_W-ZuA2Bp6fFZxFC-cF7guRqYiJ1Bd67SGYhamGudyuQ-WNeBICwDKOObaR2sr231Dhdc4e9eO7sHGKdEXpzZ6G8uFF15ew19zJAmOy6H7R73djdWt7ZLwNVn2JMbPM1glZo9txGdYOZQyaVyf4qBFRbDXonpwqMSY2hLEB7AEK0YOUThsASFMx079UHjWB3jrpLrWZqkA-ps2dYd1JSD1IHTwgVcCszWpxNasNipdYJ5KZMLgYbAznThqL95i6jOXMOQ6so1uueyZlZhiU5j5ludY4WNUY-5u7JTRyaHIxwT3KfPmOujiEXynDgTLp8qNb6haZUnI-YPeWbolk9ibpF-Ldfk26imYaEOVC4t871mrRBh_imbMn-l0aw2617d8xqth1694XkV9pLCrVq13fRajdbySqveWm7XzyvsVZF3ufqw3m5SsNGuNWrtWrt5_geNGFLL?type=png)](https://mermaid.live/edit#pako:eNqNU8tu00AU_ZWrWbVSGtrEIYmFkBr3QaW-0kSyRM1iMr5xTJ2ZMDNuA2137IvoAlEWiB2LLpBYwJpP4QfgE7hjp6VBXTArz51zzj334VMmVIzMZ8NMnYgR1xb6a5EEOp1g4TBiPz9c_vp-AR1uEDqZEkcESiWspXysZAyBklZzYSP2bDGSJdHkg0TzyQhW9_eBJH5_fPMVcIoit0qDIAYpoCZKiXcnTjUKmyoJ2wd_o2GvoF9-ghAHPUqOFrZTY5HosKdj1PsZFxgDHqO0c4K94Ilzf_EFemKEcZ6hNmBOECdE_fENjODyXxPdwzLdNXTyLNvpQjfHHA1YlSQZOhY3Jk1kwb9P6o5W6LJfvXe9C5U-ctn_W-ZuA2Bp6fFZxFC-cF7guRqYiJ1Bd67SGYhamGudyuQ-WNeBICwDKOObaR2sr231Dhdc4e9eO7sHGKdEXpzZ6G8uFF15ew19zJAmOy6H7R73djdWt7ZLwNVn2JMbPM1glZo9txGdYOZQyaVyf4qBFRbDXonpwqMSY2hLEB7AEK0YOUThsASFMx079UHjWB3jrpLrWZqkA-ps2dYd1JSD1IHTwgVcCszWpxNasNipdYJ5KZMLgYbAznThqL95i6jOXMOQ6so1uueyZlZhiU5j5ludY4WNUY-5u7JTRyaHIxwT3KfPmOujiEXynDgTLp8qNb6haZUnI-YPeWbolk9ibpF-Ldfk26imYaEOVC4t871mrRBh_imbMn-l0aw2617d8xqth1694XkV9pLCrVq13fRajdbySqveWm7XzyvsVZF3ufqw3m5SsNGuNWrtWrt5_geNGFLL)
 
-* **Listener** — OrderPlaced → enqueue ToggleMerchantsOffline (delay 0) and AssignMerchants (delay e.g. 90s). Workers call `safeSend` (or simulate when DRY_RUN).
-* **Schedulers** — Toggle every 30m; sweeper every 1m (tracked order IDs from Redis); scanner seeds pending orders.
-* **Workers** — Match job → handler; execute via `safeSend` (or staticCall only if DRY_RUN).
+- **On `OrderPlaced`** — WS listener tracks the order ID in Redis, immediately enqueues `ToggleMerchantsOffline`, and enqueues `AssignMerchants` with a configurable delay.
+- **Every 1 min** — Sweeper checks all tracked orders: untrack completed/cancelled ones, auto-cancel expired ones.
+- **Every 1 hour** — Scanner resyncs the last 2500 blocks to catch any orders the WS listener may have missed.
+- All contract writes go through `safeSend()` — balance check → staticCall simulation → send → wait 1 confirmation → Telegram alert.
 
 ---
 
@@ -136,14 +138,26 @@ Do not commit `.env`, `deploy.final.yml`, or `prev.yml`. Use `.env.example` as a
 
 ---
 
-## Deployment (Akash)
+## Deployment
 
-1. Build and push: `IMAGE_NAME=your-user/p2pme-executor TAG=v0.1.0 ./build_and_push.sh`
-2. Update `deploy.yml` (image, placement, pricing).
-3. Generate SDL: `./generate_deploy.sh` → `deploy.final.yml` (do not commit).
-4. Upload `deploy.final.yml` in Akash UI. Stack: redis + executor.
+### Any VPS (Ubuntu)
 
-`deploy.yml` includes optional `DRY_RUN=${DRY_RUN}`; set in your env when generating to enable dry run in production deployment.
+See [deploy/vps/DEPLOY.md](deploy/vps/DEPLOY.md) for full step-by-step instructions.
+
+```bash
+# On the server
+mkdir ~/executor
+# copy deploy/vps/docker-compose.yml and deploy/vps/.env.example to ~/executor/
+nano ~/executor/.env       # fill in values
+docker compose -f ~/executor/docker-compose.yml up -d
+```
+
+### Akash
+
+1. Build and push: bump `TAG` in `build_and_push.sh` and run it.
+2. Update image tag in `deploy/akash/deploy.yml`.
+3. Generate SDL: `bash deploy/akash/generate_deploy.sh` → `deploy/akash/deploy.final.yml` (do not commit).
+4. Upload `deploy.final.yml` in Akash Console UI. Stack: redis + executor.
 
 ---
 
