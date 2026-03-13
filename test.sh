@@ -13,4 +13,4 @@ echo "Starting with docker compose (foreground)..."
 echo "Press Ctrl+C to stop"
 
 # Run in foreground (no -d)
-docker compose up --build
+docker compose -f deploy/local/docker-compose.yml up --build

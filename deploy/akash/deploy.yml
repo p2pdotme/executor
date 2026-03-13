@@ -1,4 +1,6 @@
-# Akash SDL template. Use env var substitution; do not commit a version with real secrets (e.g. deploy.final.yml).
+# Akash SDL template.
+# Fill in real values via generate_deploy.sh — do NOT commit deploy.final.yml (it contains secrets).
+
 version: "2.0"
 
 services:
@@ -11,7 +13,7 @@ services:
           - service: executor
 
   executor:
-    image: keccak002/p2pme-executor:v0.1.5
+    image: youruser/p2pme-executor:v0.1.0
     expose:
       - port: 8000
         as: 80
