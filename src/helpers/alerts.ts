@@ -1,7 +1,7 @@
 import ky from 'ky';
 import { CommonConfig } from './config';
 import { logger } from './logger';
-import { ethers, Wallet } from 'ethers';
+import { ethers, Wallet, NonceManager } from 'ethers';
 
 export const sendTelegramMessage = async (
     telegramBotToken: string,
@@ -35,9 +35,9 @@ export const sendOnFail = async (config: CommonConfig, message: string) => {
     }
 };
 
-export async function ensureSufficientBalance(config: CommonConfig, signer: Wallet) {
+export async function ensureSufficientBalance(config: CommonConfig, signer: Wallet | NonceManager) {
     try {
-        const provider = signer.provider;
+        const provider = (signer as any).provider ?? (signer as NonceManager).signer?.provider;
         if (!provider) {
             logger.error('provider is null');
             return;

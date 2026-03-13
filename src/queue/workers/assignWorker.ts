@@ -10,7 +10,12 @@ import { DIAMOND_ABI } from '../../helpers/abi';
 import { sendOnFail } from '../../helpers/alerts';
 
 const ASSIGN_QUEUE_NAME = 'assign-calls';
-const LOCK_DURATION_MS = 30_000; // 30s
+// BullMQ renews the lock every lockDuration/2 while the job is running.
+// Truly stuck jobs get reclaimed after 3 min.
+// NOTE: no job-level timeout here — safeSend sends a real tx and awaits tx.wait(1).
+// A Promise.race timeout would cause a ghost tx: job retries while old tx.wait still runs
+// in background → duplicate tx submitted. BullMQ lock renewal keeps the job alive safely.
+const LOCK_DURATION_MS = 180_000; // 3 min
 
 export function startAssignWorker(config: AssignConfig) {
     const signer = getAssignSigner(config);

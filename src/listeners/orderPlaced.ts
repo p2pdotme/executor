@@ -13,7 +13,12 @@ const ORDER_PLACED_EVENT = 'OrderPlaced';
 export async function attachOrderPlacedListener(config: ToggleConfig & AssignConfig) {
     const ASSIGN_DELAY_MS = config.assignDelayInSeconds * 1000 + 1_000; // 1s buffer
 
+    // Defined outside setup() so it survives reconnects and prevents double-reconnect
+    // across simultaneous onclose + onerror events
+    let reconnectScheduled = false;
+
     const setup = () => {
+        reconnectScheduled = false; // reset so next disconnect can trigger a reconnect
         const wsProvider = getBaseWsProvider(config);
         const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, wsProvider);
 
@@ -101,9 +106,6 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
             );
             return;
         }
-
-        // guard to avoid double reconnect (onerror + onclose)
-        let reconnectScheduled = false;
 
         const scheduleReconnect = (reason: string) => {
             if (reconnectScheduled) return;

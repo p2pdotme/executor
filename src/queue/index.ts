@@ -93,7 +93,9 @@ export function initOrderScannerQueue() {
             connection,
             defaultJobOptions: {
                 removeOnComplete: true,
-                attempts: 1,
+                removeOnFail: { count: 100 },
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 5000 },
             },
         });
         logger.info(`queue: ${ORDER_SCANNER_QUEUE_NAME} initialised`);

@@ -1,4 +1,4 @@
-import { JsonRpcProvider, WebSocketProvider, Wallet } from 'ethers';
+import { JsonRpcProvider, WebSocketProvider, Wallet, NonceManager } from 'ethers';
 import { AssignConfig, CommonConfig, OrderSweeperConfig, ToggleConfig, ToggleScheduleConfig } from './config';
 import { logger } from './logger';
 
@@ -34,26 +34,27 @@ export function getBaseWsProvider(config: CommonConfig): WebSocketProvider {
 }
 
 // dedicated signer for ToggleMerchantsOffline
-export function getToggleSigner(config: ToggleConfig): Wallet {
+// NonceManager ensures sequential nonce assignment — prevents collision if called concurrently
+export function getToggleSigner(config: ToggleConfig): NonceManager {
     const provider = getBaseHttpProvider(config);
-    return new Wallet(config.toggleExecutor, provider);
+    return new NonceManager(new Wallet(config.toggleExecutor, provider));
 }
 
 // dedicated signer for AssignMerchants
-export function getAssignSigner(config: AssignConfig): Wallet {
+export function getAssignSigner(config: AssignConfig): NonceManager {
     const provider = getBaseHttpProvider(config);
-    return new Wallet(config.assignExecutor, provider);
+    return new NonceManager(new Wallet(config.assignExecutor, provider));
 }
 
 // dedicated signer for ToggleMerchantsOffline (scheduled)
-export function getToggleScheduleSigner(config: ToggleScheduleConfig): Wallet {
+export function getToggleScheduleSigner(config: ToggleScheduleConfig): NonceManager {
     const provider = getBaseHttpProvider(config);
-    return new Wallet(config.toggleScheduleExecutor, provider);
+    return new NonceManager(new Wallet(config.toggleScheduleExecutor, provider));
 }
 
-export function getOrderSweeperSigner(config: OrderSweeperConfig): Wallet {
+export function getOrderSweeperSigner(config: OrderSweeperConfig): NonceManager {
     const provider = getBaseHttpProvider(config);
-    return new Wallet(config.orderSweeperExecutor, provider);
+    return new NonceManager(new Wallet(config.orderSweeperExecutor, provider));
 }
 
 export async function withTimeout<T>(p: Promise<T>, ms = 100_000): Promise<T> {
