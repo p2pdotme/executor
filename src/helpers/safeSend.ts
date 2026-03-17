@@ -65,9 +65,14 @@ export async function safeSend(
             const msg = `❌ safeSend: sendTransaction failed fn= ${fnName} meta= ${JSON.stringify(meta)}: ${err.message}`;
             logger.error(msg);
             await sendOnFail(config, msg);
-            // CALL_EXCEPTION during estimateGas = deterministic contract revert — no point retrying
+            // CALL_EXCEPTION during estimateGas = deterministic contract revert, no point retrying
             if (err.code === 'CALL_EXCEPTION') return false;
-            // transient (RPC, network) -> allow BullMQ retries
+            // NONCE_EXPIRED = NonceManager cached a stale nonce, reset it so next attempt re-fetches from chain
+            if (err.code === 'NONCE_EXPIRED' && signer instanceof NonceManager) {
+                signer.reset();
+                logger.warn(`safeSend: NonceManager reset after NONCE_EXPIRED fn= ${fnName}`);
+            }
+            // transient (RPC, network, nonce) -> allow BullMQ retries
             throw err;
         }
 
