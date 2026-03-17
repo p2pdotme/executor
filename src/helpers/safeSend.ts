@@ -65,7 +65,9 @@ export async function safeSend(
             const msg = `❌ safeSend: sendTransaction failed fn= ${fnName} meta= ${JSON.stringify(meta)}: ${err.message}`;
             logger.error(msg);
             await sendOnFail(config, msg);
-            // send failing can be transient (RPC, network) -> allow retries
+            // CALL_EXCEPTION during estimateGas = deterministic contract revert — no point retrying
+            if (err.code === 'CALL_EXCEPTION') return false;
+            // transient (RPC, network) -> allow BullMQ retries
             throw err;
         }
 
@@ -74,7 +76,7 @@ export async function safeSend(
         );
 
         // WAIT FOR 1 CONFIRMATION
-        // We rely on BullMQ's lock renewal (every lockDuration/2) to keep the job alive for as long as it needs.
+        // Rely on BullMQ's lock renewal (every lockDuration/2) to keep the job alive for as long as it needs.
         try {
             const receipt = await tx.wait(1);
 
@@ -119,9 +121,11 @@ export async function safeSend(
             logger.error(baseMsg);
 
             // Retry on:
-            //   - CALL_EXCEPTION with no revert data (RPC glitch, tx still pending)
+            //   - CALL_EXCEPTION with no revert data AND no receipt (RPC glitch, tx still pending)
             //   - Network / timeout errors (no code, TIMEOUT, NETWORK_ERROR, SERVER_ERROR)
-            const isCallException = code === 'CALL_EXCEPTION' && data == null;
+            // Do NOT retry if receipt exists: tx was mined and reverted on-chain (deterministic)
+            const hasReceipt = err.receipt != null;
+            const isCallException = code === 'CALL_EXCEPTION' && data == null && !hasReceipt;
             const isNetworkError = !code || code === 'TIMEOUT' || code === 'NETWORK_ERROR' || code === 'SERVER_ERROR';
 
             const shouldRetry = isCallException || isNetworkError;

@@ -148,9 +148,17 @@ export async function addAssignJob(
         },
     );
 
-    logger.info(
-        `queue(${ASSIGN_QUEUE_NAME}): added job name= ${name} jobId= ${job.id} delayMs= ${delay}`,
-    );
+    // Detect silent deduplication: BullMQ returns the existing job without error when jobId matches
+    const state = await job.getState();
+    if (state !== 'delayed' && state !== 'waiting') {
+        logger.warn(
+            `queue(${ASSIGN_QUEUE_NAME}): job DEDUPED — jobId= ${job.id} already exists in state= ${state}, NOT enqueued as new`,
+        );
+    } else {
+        logger.info(
+            `queue(${ASSIGN_QUEUE_NAME}): added job name= ${name} jobId= ${job.id} delayMs= ${delay}`,
+        );
+    }
 
     return job;
 }
