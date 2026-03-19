@@ -72,7 +72,8 @@ export async function safeSend(
                 signer.reset();
                 logger.warn(`safeSend: NonceManager reset after NONCE_EXPIRED fn= ${fnName}`);
             }
-            // transient (RPC, network, nonce) -> allow BullMQ retries
+            // mark as already alerted so outer catch skips duplicate sendOnFail
+            err._alerted = true;
             throw err;
         }
 
@@ -80,86 +81,84 @@ export async function safeSend(
             `safeSend: tx sent fn= ${fnName} hash= ${tx.hash} meta= ${JSON.stringify(meta)}`,
         );
 
-        // WAIT FOR 1 CONFIRMATION
-        // Rely on BullMQ's lock renewal (every lockDuration/2) to keep the job alive for as long as it needs.
+        // WAIT FOR 1 CONFIRMATION — 3 min timeout to unblock the concurrency slot.
+        // On timeout: alert + return false. Never throw — tx is already broadcast;
+        // throwing lets BullMQ retry -> duplicate tx.
+        const TX_WAIT_TIMEOUT_MS = 3 * 60_000;
+        let waitTimeoutId: NodeJS.Timeout | undefined;
+        let receipt: any;
         try {
-            const receipt = await tx.wait(1);
-
-            if (receipt.status !== 1) {
-                const msg =
-                    `❌ safeSend: tx reverted fn= ${fnName} hash= ${tx.hash} ` +
-                    `status= ${receipt.status} meta= ${JSON.stringify(meta)}`;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                waitTimeoutId = setTimeout(() => {
+                    reject(Object.assign(new Error('tx.wait timed out'), { code: 'TX_WAIT_TIMEOUT' }));
+                }, TX_WAIT_TIMEOUT_MS);
+            });
+            receipt = await Promise.race([tx.wait(1), timeoutPromise]);
+            clearTimeout(waitTimeoutId);
+        } catch (err: any) {
+            clearTimeout(waitTimeoutId);
+            if (err.code === 'TX_WAIT_TIMEOUT') {
+                // Tx is broadcast but wait timed out — unblock the concurrency slot.
+                // Do NOT throw: BullMQ would retry -> duplicate tx.
+                const msg = `⚠️ safeSend: tx wait timeout fn= ${fnName} hash= ${tx.hash} (tx may still be pending) meta= ${JSON.stringify(meta)}`;
                 logger.error(msg);
-
-                // usually deterministic revert here -> alert but don't retry
-                const alert = `❌ ${fnName} onFail: tx reverted for ${JSON.stringify(
-                    meta,
-                )} with hash ${tx.hash}`;
-                await sendOnFail(config, alert);
-
+                await sendOnFail(config, msg);
                 return false;
             }
 
-            // success path
-            const alert = `✅ ${fnName} onSuccess: tx confirmed for ${JSON.stringify(
-                meta,
-            )} with hash ${tx.hash}`;
-            logger.info(
-                `✅ safeSend: tx confirmed fn= ${fnName} hash= ${tx.hash} block= ${receipt.blockNumber
-                } meta= ${JSON.stringify(meta)}`,
-            );
-            await sendTelegramMessage(
-                config.onFailBotToken,
-                config.onFailChanneld,
-                config.onSuccessTopicId,
-                alert,
-            );
-
-            return true;
-        } catch (err: any) {
+            // Real tx.wait error — decide whether to retry
             const code = err.code;
             const data = err.data ?? err.error?.data ?? null;
-
-            const baseMsg =
-                `❌ safeSend: tx wait error fn= ${fnName} hash= ${tx.hash} ` +
-                `meta= ${JSON.stringify(meta)}: ${err.message}`;
+            const baseMsg = `❌ safeSend: tx wait error fn= ${fnName} hash= ${tx.hash} meta= ${JSON.stringify(meta)}: ${err.message}`;
             logger.error(baseMsg);
 
-            // Retry on:
-            //   - CALL_EXCEPTION with no revert data AND no receipt (RPC glitch, tx still pending)
-            //   - Network / timeout errors (no code, TIMEOUT, NETWORK_ERROR, SERVER_ERROR)
-            // Do NOT retry if receipt exists: tx was mined and reverted on-chain (deterministic)
+            // Retry: CALL_EXCEPTION with no data + no receipt (RPC glitch, tx still pending)
+            //        or any network/timeout error
+            // No retry: receipt present -> tx mined and reverted on-chain (deterministic)
             const hasReceipt = err.receipt != null;
             const isCallException = code === 'CALL_EXCEPTION' && data == null && !hasReceipt;
             const isNetworkError = !code || code === 'TIMEOUT' || code === 'NETWORK_ERROR' || code === 'SERVER_ERROR';
-
             const shouldRetry = isCallException || isNetworkError;
 
             const alert = shouldRetry
-                ? `❌ ${fnName} onFail: tx wait error (will retry if attempts remain) for ${JSON.stringify(
-                    meta,
-                )} with hash ${tx.hash}: ${err.message}`
-                : `❌ ${fnName} onFail: tx wait error (no retry) for ${JSON.stringify(
-                    meta,
-                )} with hash ${tx.hash}: ${err.message}`;
-
+                ? `❌ ${fnName} onFail: tx wait error (will retry if attempts remain) for ${JSON.stringify(meta)} with hash ${tx.hash}: ${err.message}`
+                : `❌ ${fnName} onFail: tx wait error (no retry) for ${JSON.stringify(meta)} with hash ${tx.hash}: ${err.message}`;
             await sendOnFail(config, alert);
 
             if (shouldRetry) {
-                // throw so BullMQ counts this as a failure and retries
+                err._alerted = true;
                 throw err;
             }
-
-            // non-retryable wait error -> just return false
             return false;
         }
+
+        if (receipt.status !== 1) {
+            const msg =
+                `❌ safeSend: tx reverted fn= ${fnName} hash= ${tx.hash} ` +
+                `status= ${receipt.status} meta= ${JSON.stringify(meta)}`;
+            logger.error(msg);
+            const alert = `❌ ${fnName} onFail: tx reverted for ${JSON.stringify(meta)} with hash ${tx.hash}`;
+            await sendOnFail(config, alert);
+            return false;
+        }
+
+        // success
+        const alert = `✅ ${fnName} onSuccess: tx confirmed for ${JSON.stringify(meta)} with hash ${tx.hash}`;
+        logger.info(`✅ safeSend: tx confirmed fn= ${fnName} hash= ${tx.hash} block= ${receipt.blockNumber} meta= ${JSON.stringify(meta)}`);
+        await sendTelegramMessage(
+            config.onFailBotToken,
+            config.onFailChanneld,
+            config.onSuccessTopicId,
+            alert,
+        );
+        return true;
     } catch (err: any) {
-        const msg = `❌ safeSend ERROR fn= ${fnName} meta= ${JSON.stringify(
-            meta,
-        )} err= ${err.message} "will retry"`;
-        logger.error(msg);
-        await sendOnFail(config, msg);
-        // this throw, allows BullMQ to retry
+        // Only alert here for errors not already handled by an inner catch
+        if (!err._alerted) {
+            const msg = `❌ safeSend ERROR fn= ${fnName} meta= ${JSON.stringify(meta)} err= ${err.message} "will retry"`;
+            logger.error(msg);
+            await sendOnFail(config, msg);
+        }
         throw err;
     }
 }
