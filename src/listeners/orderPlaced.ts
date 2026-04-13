@@ -67,7 +67,7 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
                     config,
                     'AssignMerchants',
                     { orderId: orderIdStr, txHash },
-                    { jobId: `assign-${orderIdStr}`, delayMs: ASSIGN_DELAY_MS },
+                    { delayMs: ASSIGN_DELAY_MS },
                 );
 
                 logger.info(
