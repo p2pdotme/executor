@@ -506,24 +506,6 @@ export const DIAMOND_FUNCTIONS = [
     {
         "inputs": [
             {
-                "internalType": "bytes32",
-                "name": "currency",
-                "type": "bytes32"
-            },
-            {
-                "internalType": "address[]",
-                "name": "merchants",
-                "type": "address[]"
-            }
-        ],
-        "name": "toggleMerchantsOffline",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {
                 "internalType": "uint256",
                 "name": "_orderId",
                 "type": "uint256"
