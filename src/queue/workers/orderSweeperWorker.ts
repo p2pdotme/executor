@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
-import { Contract } from 'ethers';
-import { OrderSweeperConfig } from '../../helpers/config';
-import { getOrderSweeperSigner } from '../../helpers/provider';
+import { Contract, Interface } from 'ethers';
+import { ExecutorConfig } from '../../helpers/config';
+import { getBaseHttpProvider } from '../../helpers/provider';
 import { logger } from '../../helpers/logger';
 import {
     ORDER_SWEEPER_QUEUE_NAME,
@@ -12,19 +12,19 @@ import { DIAMOND_ABI } from '../../helpers/abi';
 import { getTrackedOrderIds, untrackOrderIds } from '../../utils/orderTracker';
 import { safeSend } from '../../helpers/safeSend';
 import { withTimeout } from '../../helpers/provider';
+import { getMulticall3 } from '../../helpers/multicall';
+import { WalletManager, WalletRole } from '../../helpers/walletManager';
 
-// BullMQ renews lock every lockDuration/2 while the job is running.
-// Truly stuck jobs get reclaimed after 3 min.
-// NOTE: no job-level timeout — safeSend awaits tx.wait(1); a Promise.race timeout would cause
-// a ghost tx (old tx.wait keeps running on retry) → duplicate autoCancelExpiredOrders on-chain.
-// Per-RPC-call withTimeout(8000) already guards the read phase above.
 const LOCK_DURATION_MS = 180_000; // 3 min
-const BATCH_CONCURRENCY = 20;     // parallel RPC calls per batch
 const STATUS_CANCELLED_OR_COMPLETE_THRESHOLD = 3; // status >= 3 => done
+const CANCEL_BATCH_SIZE = 20; // max orders per autoCancelExpiredOrders tx to stay within gas limits
 
-export function startOrderSweeperWorker(config: OrderSweeperConfig) {
-    const signer = getOrderSweeperSigner(config);
+export function startOrderSweeperWorker(config: ExecutorConfig, walletManager: WalletManager) {
+    const signer = walletManager.getSigner(WalletRole.Sweeper);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
+    const provider = getBaseHttpProvider(config);
+    const multicall3 = getMulticall3(provider);
+    const diamondIface = new Interface(DIAMOND_ABI);
 
     initOrderSweeperQueue();
 
@@ -37,39 +37,73 @@ export function startOrderSweeperWorker(config: OrderSweeperConfig) {
                 return;
             }
 
-            logger.info(`🧹 order-sweeper: checking ${ids.length} tracked orders`);
+            logger.info(`🧹 order-sweeper: checking ${ids.length} tracked orders via Multicall3`);
+
+            // Build one aggregate3 call: 2 calls per order (getOrdersById + isOrderExpired)
+            const calls = ids.flatMap(id => [
+                {
+                    target: config.diamondAddress,
+                    allowFailure: true,
+                    callData: diamondIface.encodeFunctionData('getOrdersById', [BigInt(id)]),
+                },
+                {
+                    target: config.diamondAddress,
+                    allowFailure: true,
+                    callData: diamondIface.encodeFunctionData('isOrderExpired', [BigInt(id)]),
+                },
+            ]);
+
+            let results: any[];
+            try {
+                results = await withTimeout(multicall3.aggregate3.staticCall(calls), 30_000);
+            } catch (err: any) {
+                logger.error(`🧹 order-sweeper: Multicall3 failed: ${err.message}`);
+                throw err; // BullMQ retry
+            }
 
             const completedIds: string[] = [];
             const expiredIds: string[] = [];
 
-            for (let i = 0; i < ids.length; i += BATCH_CONCURRENCY) {
-                const batch = ids.slice(i, i + BATCH_CONCURRENCY);
+            for (let i = 0; i < ids.length; i++) {
+                const id = ids[i];
+                const orderResult = results[i * 2];
+                const expiredResult = results[i * 2 + 1];
 
-                const results = await Promise.allSettled(
-                    batch.map(async (id) => {
-                        const order = await withTimeout(diamond.getOrdersById(id), 8000);
-                        const expired: boolean = order && Number(order.status) < STATUS_CANCELLED_OR_COMPLETE_THRESHOLD
-                            ? await withTimeout(diamond.isOrderExpired(id), 8000)
-                            : false;
-                        return { id, order, expired };
-                    }),
-                );
+                if (!orderResult.success) {
+                    logger.warn(`🧹 order-sweeper: getOrdersById failed for orderId=${id}`);
+                    continue;
+                }
 
-                for (const result of results) {
-                    if (result.status === 'rejected') {
-                        logger.warn(`❌ order-sweeper: check failed for a batch item: ${result.reason?.message ?? result.reason}`);
-                        continue;
-                    }
+                let order: any;
+                try {
+                    [order] = diamondIface.decodeFunctionResult('getOrdersById', orderResult.returnData);
+                } catch (err: any) {
+                    logger.warn(`🧹 order-sweeper: decode failed for orderId=${id}: ${err.message}`);
+                    continue;
+                }
 
-                    const { id, order, expired } = result.value;
+                if (!order || Number(order.status) >= STATUS_CANCELLED_OR_COMPLETE_THRESHOLD) {
+                    logger.debug(`🧹▶️ order-sweeper: order ${id} is COMPLETED/CANCELLED, will be untracked`);
+                    completedIds.push(id);
+                    continue;
+                }
 
-                    if (!order || Number(order.status) >= STATUS_CANCELLED_OR_COMPLETE_THRESHOLD) {
-                        logger.debug(`🧹▶️ order-sweeper: order ${id} is in COMPLETED/CANCELLED status, will be untracked`);
-                        completedIds.push(id);
-                    } else if (expired) {
-                        logger.debug(`🧹▶️ order-sweeper: order ${id} is expired, will be cancelled`);
-                        expiredIds.push(id);
-                    }
+                if (!expiredResult.success) {
+                    logger.warn(`🧹 order-sweeper: isOrderExpired failed for orderId=${id}`);
+                    continue;
+                }
+
+                let isExpired: boolean;
+                try {
+                    [isExpired] = diamondIface.decodeFunctionResult('isOrderExpired', expiredResult.returnData);
+                } catch (err: any) {
+                    logger.warn(`🧹 order-sweeper: decode isExpired failed for orderId=${id}: ${err.message}`);
+                    continue;
+                }
+
+                if (isExpired) {
+                    logger.debug(`🧹▶️ order-sweeper: order ${id} is expired, will be cancelled`);
+                    expiredIds.push(id);
                 }
             }
 
@@ -83,28 +117,32 @@ export function startOrderSweeperWorker(config: OrderSweeperConfig) {
                 return;
             }
 
-            logger.info(
-                `🧹 order-sweeper: cancelling ${expiredIds.length} expired orders orderIds=${expiredIds.join(',')}`,
-            );
+            logger.info(`🧹 order-sweeper: cancelling ${expiredIds.length} expired orders orderIds=${expiredIds.join(',')}`);
 
-            try {
-                const ok = await safeSend(
-                    diamond,
-                    'autoCancelExpiredOrders',
-                    [expiredIds],
-                    config,
-                    { source: 'sweeper', orderIds: expiredIds },
-                );
+            // Chunk into batches to avoid hitting block gas limits
+            for (let i = 0; i < expiredIds.length; i += CANCEL_BATCH_SIZE) {
+                const batch = expiredIds.slice(i, i + CANCEL_BATCH_SIZE);
+                try {
+                    // skipPresim=true: we already confirmed expiry via isOrderExpired above
+                    const ok = await safeSend(
+                        diamond,
+                        'autoCancelExpiredOrders',
+                        [batch],
+                        config,
+                        { source: 'sweeper', orderIds: batch },
+                        true,
+                    );
 
-                if (ok) {
-                    await untrackOrderIds(expiredIds);
-                    logger.info(`✅ order-sweeper: untracked ${expiredIds.length} expired orders after successful send`);
-                } else {
-                    logger.warn('❌ order-sweeper: safeSend returned false; keeping expired orders tracked for retry');
+                    if (ok) {
+                        await untrackOrderIds(batch);
+                        logger.info(`✅ order-sweeper: untracked ${batch.length} expired orders (batch ${Math.floor(i / CANCEL_BATCH_SIZE) + 1})`);
+                    } else {
+                        logger.warn(`❌ order-sweeper: safeSend returned false for batch starting at index ${i}; keeping tracked for retry`);
+                    }
+                } catch (err: any) {
+                    logger.error(`❌ order-sweeper: safeSend threw for batch at index ${i}; keeping tracked. error=${err.message}`);
+                    throw err;
                 }
-            } catch (err: any) {
-                logger.error(`❌ order-sweeper: safeSend threw; keeping expired orders tracked. error=${err.message}`);
-                throw err;
             }
         },
         {
