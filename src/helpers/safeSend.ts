@@ -67,10 +67,19 @@ export async function safeSend(
             await sendOnFail(config, msg);
             // CALL_EXCEPTION during estimateGas = deterministic contract revert, no point retrying
             if (err.code === 'CALL_EXCEPTION') return false;
-            // NONCE_EXPIRED = NonceManager cached a stale nonce, reset it so next attempt re-fetches from chain
+            // NONCE_EXPIRED = NonceManager cached a stale nonce, reset so next attempt re-fetches from chain
             if (err.code === 'NONCE_EXPIRED' && signer instanceof NonceManager) {
                 signer.reset();
                 logger.warn(`safeSend: NonceManager reset after NONCE_EXPIRED fn= ${fnName}`);
+            }
+            // REPLACEMENT_UNDERPRICED = a tx with this nonce is already stuck in the mempool.
+            // Retrying with the same or lower gas just loops forever and blocks all subsequent jobs.
+            // Reset the NonceManager so the next job gets a fresh nonce and can proceed.
+            if (err.code === 'REPLACEMENT_UNDERPRICED' && signer instanceof NonceManager) {
+                signer.reset();
+                logger.warn(`safeSend: NonceManager reset after REPLACEMENT_UNDERPRICED fn= ${fnName} — stuck mempool tx, skipping retry`);
+                err._alerted = true;
+                return false;
             }
             // mark as already alerted so outer catch skips duplicate sendOnFail
             err._alerted = true;
@@ -98,8 +107,31 @@ export async function safeSend(
         } catch (err: any) {
             clearTimeout(waitTimeoutId);
             if (err.code === 'TX_WAIT_TIMEOUT') {
-                // Tx is broadcast but wait timed out — unblock the concurrency slot.
+                // Reset NonceManager so the next job gets a fresh nonce from chain,
+                // not a stale cached value from this timed-out tx.
+                if (signer instanceof NonceManager) {
+                    signer.reset();
+                    logger.warn(`safeSend: NonceManager reset after TX_WAIT_TIMEOUT fn= ${fnName}`);
+                }
+
+                // Tx is broadcast but wait timed out — check if it actually landed.
                 // Do NOT throw: BullMQ would retry -> duplicate tx.
+                try {
+                    const provider = (signer as any)?.provider ?? contract.runner?.provider ?? null;
+                    const landed = provider ? await provider.getTransactionReceipt(tx.hash) : null;
+                    if (landed && landed.status === 1) {
+                        const alert = `✅ ${fnName} onSuccess (post-timeout): tx confirmed for ${JSON.stringify(meta)} with hash ${tx.hash}`;
+                        logger.info(`✅ safeSend: tx confirmed post-timeout fn= ${fnName} hash= ${tx.hash} block= ${landed.blockNumber} meta= ${JSON.stringify(meta)}`);
+                        await sendTelegramMessage(config.onFailBotToken, config.onFailChanneld, config.onSuccessTopicId, alert);
+                        return true;
+                    } else if (landed && landed.status !== 1) {
+                        logger.error(`❌ safeSend: tx reverted post-timeout fn= ${fnName} hash= ${tx.hash}`);
+                    } else {
+                        logger.warn(`⚠️ safeSend: tx still pending post-timeout fn= ${fnName} hash= ${tx.hash}`);
+                    }
+                } catch (receiptErr: any) {
+                    logger.warn(`safeSend: post-timeout receipt check failed fn= ${fnName}: ${receiptErr.message}`);
+                }
                 const msg = `⚠️ safeSend: tx wait timeout fn= ${fnName} hash= ${tx.hash} (tx may still be pending) meta= ${JSON.stringify(meta)}`;
                 logger.error(msg);
                 await sendOnFail(config, msg);
