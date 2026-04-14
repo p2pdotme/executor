@@ -5,7 +5,7 @@ export async function sendDiscordAlert(webhookUrl: string, message: string): Pro
     if (!webhookUrl) return;
     try {
         await ky.post(webhookUrl, {
-            json: { content: message },
+            json: { content: message, flags: 4 },
             timeout: 10_000,
             retry: { limit: 2 },
         });
