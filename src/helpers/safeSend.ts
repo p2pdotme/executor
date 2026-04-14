@@ -9,8 +9,14 @@ import { ContractCallerConfig } from './config';
 function fmtErr(err: any): string {
     const reason = err?.reason ?? err?.error?.reason ?? null;
     if (reason) return String(reason);
+    // Custom error: include the 4-byte selector so it can be decoded manually
+    const data = err?.data ?? err?.error?.data ?? null;
+    if (data && typeof data === 'string' && data.length >= 10) {
+        const selector = data.slice(0, 10); // 0x + 4 bytes
+        const msg = String(err?.message ?? err).replace(/\s*\(action=.*$/s, '').trim().slice(0, 150);
+        return `${msg} [selector: ${selector}]`;
+    }
     const msg = String(err?.message ?? err);
-    // Everything from " (action=" onwards is ethers internals — drop it
     return msg.replace(/\s*\(action=.*$/s, '').trim().slice(0, 200);
 }
 
@@ -87,20 +93,24 @@ export async function safeSend(
         try {
             tx = await fn(...args);
         } catch (err: any) {
+            // Nonce issues: reset and retry silently — no Discord alert, these are transient
+            if (err.code === 'NONCE_EXPIRED' && signer instanceof NonceManager) {
+                signer.reset();
+                logger.warn(`safeSend: NONCE_EXPIRED, nonce reset, will retry fn=${fnName}`);
+                err._alerted = true;
+                throw err; // BullMQ retries
+            }
+            if (err.code === 'REPLACEMENT_UNDERPRICED' && signer instanceof NonceManager) {
+                signer.reset();
+                logger.warn(`safeSend: REPLACEMENT_UNDERPRICED, nonce reset fn=${fnName}`);
+                err._alerted = true;
+                return false;
+            }
+            // All other send failures: alert Discord
             const alert = `${fnName} | send failed | ${m}\n↳ ${err.code ?? fmtErr(err)}`;
             logger.error(`safeSend: sendTransaction failed fn=${fnName} meta=${JSON.stringify(meta)}: ${err.message}`);
             await sendOnFail(config, alert);
             if (err.code === 'CALL_EXCEPTION') return false;
-            if (err.code === 'NONCE_EXPIRED' && signer instanceof NonceManager) {
-                signer.reset();
-                logger.warn(`safeSend: NonceManager reset after NONCE_EXPIRED fn=${fnName}`);
-            }
-            if (err.code === 'REPLACEMENT_UNDERPRICED' && signer instanceof NonceManager) {
-                signer.reset();
-                logger.warn(`safeSend: NonceManager reset after REPLACEMENT_UNDERPRICED fn=${fnName}`);
-                err._alerted = true;
-                return false;
-            }
             err._alerted = true;
             throw err;
         }
