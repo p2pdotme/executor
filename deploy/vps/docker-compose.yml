@@ -17,7 +17,7 @@ services:
         max-file: "3"
 
   executor:
-    image: keccak002/p2pme-executor:latest
+    image: youruser/p2pme-executor:v0.1.0
     env_file: .env
     environment:
       - REDIS_URL=redis://redis:6379
