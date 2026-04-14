@@ -129,7 +129,7 @@ export function startOrderSweeperWorker(config: ExecutorConfig, walletManager: W
                         'autoCancelExpiredOrders',
                         [batch],
                         config,
-                        { source: 'sweeper', orderIds: batch },
+                        { orderIds: batch },
                         true,
                     );
 

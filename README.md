@@ -222,12 +222,33 @@ safeSend()
 
 ---
 
-## Deployment (Akash)
+## Deployment
 
-1. Fill in all values in `deploy.final.yml` (see comments in the file). **Do not commit the filled-in file to git.**
-2. Build and push the image: bump `TAG` in `build_and_push.sh` and run it.
-3. Update the image tag in `deploy.final.yml`.
-4. Upload `deploy.final.yml` in [Akash Console](https://console.akash.network). Stack: redis + executor.
+### VPS (recommended)
+
+See [`deploy/vps/DEPLOY.md`](deploy/vps/DEPLOY.md) for full step-by-step instructions.
+
+```bash
+# On the server
+mkdir ~/executor && cd ~/executor
+nano docker-compose.yml   # paste deploy/vps/docker-compose.yml
+nano .env                 # paste deploy/vps/.env.example, fill in all values
+docker compose pull && docker compose up -d
+docker compose logs -f executor
+```
+
+### Build and push image
+
+```bash
+# Bump TAG in build_and_push.sh, then:
+./build_and_push.sh
+# Update the image tag in ~/executor/docker-compose.yml on the server, then:
+docker compose pull && docker compose up -d
+```
+
+### Akash
+
+Fill in `deploy.final.yml` (see comments in the file), build and push the image, then upload the SDL in [Akash Console](https://console.akash.network). **Do not commit the filled-in file to git.**
 
 ---
 

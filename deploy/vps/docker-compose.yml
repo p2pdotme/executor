@@ -2,20 +2,36 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 2s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   executor:
-    image: youruser/p2pme-executor:v0.1.0
+    image: keccak002/p2pme-executor:latest
     env_file: .env
     environment:
       - REDIS_URL=redis://redis:6379
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     restart: always
     depends_on:
       redis:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  redis_data:

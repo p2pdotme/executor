@@ -14,20 +14,22 @@ function fmtErr(err: any): string {
     return msg.replace(/\s*\(action=.*$/s, '').trim().slice(0, 200);
 }
 
-/** Format meta object as clean key=value pairs, shortening address arrays */
+/** Format meta object as clean key=value pairs, truncating addresses */
 function fmtMeta(meta: Record<string, any>): string {
     return Object.entries(meta)
         .map(([k, v]) => {
             if (!Array.isArray(v)) return `${k}=${v}`;
             const isAddrs = typeof v[0] === 'string' && v[0].startsWith('0x') && v[0].length === 42;
-            return isAddrs ? `${k}=${v.length} addr` : `${k}=${v.join(',')}`;
+            return isAddrs
+                ? `${k}=${v.map((a: string) => `[${a}](https://basescan.org/address/${a})`).join(', ')}`
+                : `${k}=${v.join(',')}`;
         })
         .join(' | ');
 }
 
-/** Shorten a tx hash for display */
+/** Shorten a tx hash and link to basescan */
 function fmtHash(hash: string): string {
-    return `${hash.slice(0, 10)}...${hash.slice(-6)}`;
+    return `[${hash.slice(0, 10)}...${hash.slice(-6)}](https://basescan.org/tx/${hash})`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,7 +48,7 @@ export async function safeSend(
 
     try {
         if (!signer || !(signer as any).provider) {
-            const msg = `❌ ${fnName} | missing signer/provider | ${m}`;
+            const msg = `${fnName} | missing signer/provider | ${m}`;
             logger.error(msg);
             await sendOnFail(config, msg);
             throw new Error('missing signer/provider');
@@ -73,7 +75,7 @@ export async function safeSend(
             try {
                 await fn.staticCall(...args);
             } catch (err: any) {
-                const alert = `❌ ${fnName} | staticCall reverted | ${m}\n↳ ${fmtErr(err)}`;
+                const alert = `${fnName} | staticCall reverted | ${m}\n↳ ${fmtErr(err)}`;
                 logger.error(`safeSend: staticCall failed fn=${fnName} meta=${JSON.stringify(meta)}: ${err.message}`);
                 await sendOnFail(config, alert);
                 return false;
@@ -85,7 +87,7 @@ export async function safeSend(
         try {
             tx = await fn(...args);
         } catch (err: any) {
-            const alert = `❌ ${fnName} | send failed | ${m}\n↳ ${err.code ?? fmtErr(err)}`;
+            const alert = `${fnName} | send failed | ${m}\n↳ ${err.code ?? fmtErr(err)}`;
             logger.error(`safeSend: sendTransaction failed fn=${fnName} meta=${JSON.stringify(meta)}: ${err.message}`);
             await sendOnFail(config, alert);
             if (err.code === 'CALL_EXCEPTION') return false;
@@ -128,7 +130,7 @@ export async function safeSend(
                     const provider = (signer as any)?.provider ?? contract.runner?.provider ?? null;
                     const landed = provider ? await provider.getTransactionReceipt(tx.hash) : null;
                     if (landed && landed.status === 1) {
-                        const alert = `✅ ${fnName} | confirmed (post-timeout) | ${m}\n↳ hash: ${fmtHash(tx.hash)}`;
+                        const alert = `${fnName} | ${m}\n↳ ${fmtHash(tx.hash)}`;
                         logger.info(`safeSend: tx confirmed post-timeout fn=${fnName} hash=${tx.hash} block=${landed.blockNumber}`);
                         await sendOnSuccess(config, alert);
                         return true;
@@ -140,7 +142,7 @@ export async function safeSend(
                 } catch (receiptErr: any) {
                     logger.warn(`safeSend: post-timeout receipt check failed fn=${fnName}: ${receiptErr.message}`);
                 }
-                const alert = `⚠️ ${fnName} | wait timeout (tx may still be pending) | ${m}\n↳ hash: ${fmtHash(tx.hash)}`;
+                const alert = `${fnName} | wait timeout (tx may still be pending) | ${m}\n↳ ${fmtHash(tx.hash)}`;
                 logger.error(`safeSend: tx wait timeout fn=${fnName} hash=${tx.hash} meta=${JSON.stringify(meta)}`);
                 await sendOnFail(config, alert);
                 return false;
@@ -157,8 +159,8 @@ export async function safeSend(
             const shouldRetry = isCallException || isNetworkError;
 
             const alert = shouldRetry
-                ? `⚠️ ${fnName} | tx wait error (retrying) | ${m}\n↳ hash: ${fmtHash(tx.hash)}`
-                : `❌ ${fnName} | tx reverted | ${m}\n↳ hash: ${fmtHash(tx.hash)}`;
+                ? `${fnName} | tx wait error (retrying) | ${m}\n↳ ${fmtHash(tx.hash)}`
+                : `${fnName} | tx reverted | ${m}\n↳ ${fmtHash(tx.hash)}`;
             await sendOnFail(config, alert);
 
             if (shouldRetry) {
@@ -170,20 +172,20 @@ export async function safeSend(
 
         if (receipt.status !== 1) {
             logger.error(`safeSend: tx reverted fn=${fnName} hash=${tx.hash} status=${receipt.status} meta=${JSON.stringify(meta)}`);
-            const alert = `❌ ${fnName} | tx reverted | ${m}\n↳ hash: ${fmtHash(tx.hash)}`;
+            const alert = `${fnName} | tx reverted | ${m}\n↳ ${fmtHash(tx.hash)}`;
             await sendOnFail(config, alert);
             return false;
         }
 
         // success
-        const alert = `✅ ${fnName} | confirmed | ${m}\n↳ hash: ${fmtHash(tx.hash)}`;
+        const alert = `${fnName} | ${m}\n↳ ${fmtHash(tx.hash)}`;
         logger.info(`safeSend: tx confirmed fn=${fnName} hash=${tx.hash} block=${receipt.blockNumber} meta=${JSON.stringify(meta)}`);
         await sendOnSuccess(config, alert);
         return true;
 
     } catch (err: any) {
         if (!err._alerted) {
-            const alert = `❌ ${fnName} | error (retrying) | ${m}\n↳ ${fmtErr(err)}`;
+            const alert = `${fnName} | error (retrying) | ${m}\n↳ ${fmtErr(err)}`;
             logger.error(`safeSend: unhandled error fn=${fnName} meta=${JSON.stringify(meta)}: ${err.message}`);
             await sendOnFail(config, alert);
         }
