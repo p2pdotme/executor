@@ -1,32 +1,31 @@
 # p2pme-executor
 
-Event-driven + schedule-based contract automation for P2P.me on Base. Listens to on-chain events, runs scheduled jobs (merchant cleanup, order sweeper), and executes contract calls via dedicated executor wallets. Uses ethers.js, BullMQ, Redis, Express. Runs on Akash with Redis sidecar.
+Event-driven + schedule-based contract automation for P2P.me on Base. Listens to on-chain events, runs scheduled jobs (order sweeper, order scanner), and executes contract calls via dedicated executor wallets. Uses ethers.js v6, BullMQ, Redis, Express. Runs on Akash with a Redis sidecar.
 
 ---
 
 ## Table of Contents
 
-* [What it does](#what-it-does)
-* [Architecture](#architecture)
-* [Prerequisites](#prerequisites)
-* [Environment Variables](#environment-variables)
-* [Dry run mode](#dry-run-mode)
-* [Secrets and .env](#secrets-and-env)
-* [Quick Start (Local)](#quick-start-local)
-* [How it works](#how-it-works)
-* [API endpoints](#api-endpoints)
-* [Deployment (Akash)](#deployment-akash)
-* [Testing](#testing)
-* [License](#license)
+- [What it does](#what-it-does)
+- [Architecture](#architecture)
+- [Wallet management](#wallet-management)
+- [Environment variables](#environment-variables)
+- [Dry run mode](#dry-run-mode)
+- [Quick start (local)](#quick-start-local)
+- [How it works](#how-it-works)
+- [API endpoints](#api-endpoints)
+- [Deployment (Akash)](#deployment-akash)
+- [License](#license)
 
 ---
 
 ## What it does
 
-1. **Blockchain event listening** — Subscribes to Diamond on Base (WebSocket). On **OrderPlaced**, triggers remove-non-eligible-merchants (immediate) and assign-merchants (delayed).
-2. **Scheduled jobs** — Toggle schedule (30m), order sweeper (1m), order scanner (seeds Redis for sweeper).
-3. **Queue-driven execution** — Workers consume jobs and execute contract calls with the correct executor wallet; balance checks and Telegram alerts.
-4. **HTTP API** — Health, registry, tx debug by hash, list tracked orders.
+1. **Event listening** — Subscribes to the Diamond contract on Base (WebSocket). On `OrderPlaced`, immediately enqueues `ToggleMerchantsOffline` and enqueues `AssignMerchants` after a configurable delay.
+2. **Order sweeper** — Every 1 minute: batch-checks all tracked orders via Multicall3, untracking completed/cancelled ones and auto-cancelling expired ones.
+3. **Order scanner** — Every 1 hour: rescans the last 2 500 blocks to catch any orders the WS listener may have missed.
+4. **Auto-funded wallets** — Three subwallets (toggle, assign, sweeper) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
+5. **HTTP API** — Health, registry, tx debug by hash, list tracked orders.
 
 ---
 
@@ -34,141 +33,225 @@ Event-driven + schedule-based contract automation for P2P.me on Base. Listens to
 
 ```
 src/
-├── listeners/       # OrderPlaced → toggle + assign jobs
-├── schedulers/       # Repeatable jobs (toggle, sweeper, scanner)
-├── queue/            # BullMQ queues + workers (handlers call safeSend)
-├── helpers/         # config, safeSend, provider, alerts, ABI, logger
-├── utils/            # orderTracker, fetchPendingOrders
-└── index.ts          # Bootstrap
+├── listeners/          # OrderPlaced WS → enqueue toggle + assign jobs
+├── schedulers/         # Repeating BullMQ jobs (sweeper every 1m, scanner every 1h)
+├── queue/
+│   ├── index.ts        # Queue definitions + addToggleJob / addAssignJob helpers
+│   ├── handlers.ts     # Business logic: toggleMerchantsOffline, assignMerchants
+│   └── workers/        # BullMQ workers: toggle, assign, orderSweeper, orderScanner
+├── helpers/
+│   ├── safeSend.ts     # All contract writes go here (presim → send → wait → alert)
+│   ├── walletManager.ts# Subwallet lifecycle: load/generate/persist, auto-fund
+│   ├── discord.ts      # sendDiscordAlert (3 channel webhooks)
+│   ├── multicall.ts    # Multicall3 helper (batch RPC reads into 1 eth_call)
+│   ├── config.ts       # loadExecutorConfig() — fails fast on missing env
+│   ├── provider.ts     # Alchemy HTTP/WS providers, withTimeout
+│   └── abi.ts          # Diamond contract ABI
+├── utils/
+│   ├── orderTracker.ts # Redis set: track/untrack/sync active order IDs
+│   └── fetchPendingOrders.ts  # getLogs → Multicall3 batch status check
+└── index.ts            # Bootstrap: config → wallets → workers → listeners → schedulers
 ```
 
-All contract **writes** go through `safeSend()` in `helpers/safeSend.ts`. When **DRY_RUN** is enabled, `safeSend` only runs `staticCall` (simulation) and never sends a transaction.
+All contract **writes** go through `safeSend()`. It handles pre-simulation, sending, confirmation wait, nonce resets, and Discord alerts. When `DRY_RUN=true` it only runs `staticCall` — no transaction is ever sent.
 
 ---
 
-## Prerequisites
+## Wallet management
 
-Node.js 20+, Docker, Redis. Akash CLI optional for deployment.
+The executor uses **three subwallets** (toggle, assign, sweeper) plus one **funding wallet**. You never need to manage subwallet keys manually.
+
+### Priority on every boot
+
+```
+env var set?  →  use it directly (authoritative)
+              ↓ no
+Redis has key?  →  load from previous boot (persisted key)
+               ↓ no
+Generate fresh wallet, save to Redis, log the address
+```
+
+### To bring your own wallets
+
+Set the optional env vars:
+
+```env
+TOGGLE_EXECUTOR=0x...privatekey
+ASSIGN_EXECUTOR=0x...privatekey
+ORDER_SWEEPER_EXECUTOR=0x...privatekey
+```
+
+If these are set, they are used on every boot. If not set, the executor creates and persists wallets in Redis automatically.
+
+### To rotate a wallet
+
+Update the env var and redeploy. The new key is used immediately; the Redis entry for that role is ignored when an env var is present.
+
+### Funding
+
+Only `FUNDING_EXECUTOR` is required. The funding wallet tops up any subwallet that drops below `MIN_BASE_BALANCE_ETH` (default 0.005 ETH), sending enough to bring it to 0.02 ETH. On every boot and every 10 minutes, balances are checked and Discord alerts are sent to the balance channel.
+
+On first boot, Discord (success channel) receives all wallet addresses so you know what to fund.
 
 ---
 
-## Environment Variables
+## Environment variables
 
-In `.env` for local; in Akash SDL `env:` for production.
+Copy `.env.example` to `.env` for local dev. For Akash, set these in the SDL `env:` block.
 
-### Core
-
-| Variable | Description |
-|----------|-------------|
-| `REDIS_URL` | Optional. Default `redis://redis:6379`. Use `redis://localhost:6379` when running app on host. |
-| `ALCHEMY_API_KEY` | Alchemy API key for Base. |
-| `DIAMOND_ADDRESS` | Diamond contract on Base. |
-
-### Executor wallets (one key per responsibility)
+### Required
 
 | Variable | Description |
-|----------|-------------|
-| `TOGGLE_EXECUTOR` | Private key for remove-non-eligible-merchants (event + schedule). |
-| `ASSIGN_EXECUTOR` | Private key for assignMerchants. |
-| `ASSIGN_DELAY_IN_SECONDS` | Delay before assign after OrderPlaced (e.g. 90). |
-| `TOGGLE_SCHEDULE_EXECUTOR` | Private key for scheduled toggle. |
-| `ORDER_SWEEPER_EXECUTOR` | Private key for order sweeper. |
+|---|---|
+| `ALCHEMY_API_KEY` | Alchemy API key for Base mainnet |
+| `DIAMOND_ADDRESS` | Diamond contract address on Base |
+| `FUNDING_EXECUTOR` | Private key of the funding wallet (tops up subwallets) |
+| `DISCORD_ONSUCCESS_WEBHOOK_URL` | Discord webhook — successful tx alerts |
+| `DISCORD_ONFAIL_WEBHOOK_URL` | Discord webhook — failed tx / WS error alerts |
+| `DISCORD_BALANCE_WEBHOOK_URL` | Discord webhook — balance + auto-fund alerts |
+| `ASSIGN_DELAY_IN_SECONDS` | Seconds to wait before assigning merchants after OrderPlaced (e.g. `90`) |
 
-### OnFail Telegram
-
-`TELEGRAM_ONFAIL_BOT_TOKEN`, `TELEGRAM_ONFAIL_CHANNEL_ID`, `TELEGRAM_ONFAIL_TOPIC_ID`, `TELEGRAM_ONSUCCESS_TOPIC_ID`, `TELEGRAM_BALANCE_TOPIC_ID`.
-
-### Other
+### Optional
 
 | Variable | Description |
-|----------|-------------|
-| `MIN_BASE_BALANCE_ETH` | Min ETH on Base; alerts below this (default 0.005). |
-| `PORT` | HTTP port (default 8000). |
-| `DRY_RUN` | Set to `true` to simulate only; no transactions sent. See [Dry run mode](#dry-run-mode). |
+|---|---|
+| `REDIS_URL` | Default: `redis://redis:6379`. Use `redis://localhost:6379` for local dev |
+| `MIN_BASE_BALANCE_ETH` | Minimum subwallet ETH before auto-fund kicks in (default `0.005`) |
+| `LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default `info`) |
+| `DRY_RUN` | `true` to simulate only — no transactions sent (default `false`) |
+| `PORT` | HTTP port (default `8000`) |
 
-See [.env.example](.env.example) (root, for local dev) or [deploy/vps/.env.example](deploy/vps/.env.example) (VPS/production).
+### Optional — bring your own subwallet keys
+
+| Variable | Description |
+|---|---|
+| `TOGGLE_EXECUTOR` | Private key for the toggle wallet (if not set, auto-managed) |
+| `ASSIGN_EXECUTOR` | Private key for the assign wallet (if not set, auto-managed) |
+| `ORDER_SWEEPER_EXECUTOR` | Private key for the sweeper wallet (if not set, auto-managed) |
 
 ---
 
 ## Dry run mode
 
-Set **`DRY_RUN=true`** in `.env` (or in Akash env) to run in **simulation-only** mode:
+Set `DRY_RUN=true` to run against mainnet without spending gas or changing state.
 
-* Every contract write path goes through `safeSend()`. When `config.dryRun` is true, `safeSend`:
-  * Still performs balance checks and uses the same config (including executor keys).
-  * Runs only `fn.staticCall(...args)` (ethers simulation); **no transaction is sent**.
-  * Logs `safeSend[DRY_RUN]: simulated fn= ... ok` on success or `safeSend[DRY_RUN]: simulation failed` on revert.
-  * Does not send Telegram success/fail for the “tx” (no tx hash).
-* Use this to verify handlers and config against the chain without spending gas or changing state. All workers (toggle, assign, toggle-schedule, order-sweeper) respect DRY_RUN because they all use `safeSend`.
+| Component | Behaviour in dry run |
+|---|---|
+| `safeSend` (all contract writes) | Runs `staticCall` only — no `sendTransaction` |
+| `checkAndFund` (wallet auto-top-up) | Logs `[DRY_RUN] Would auto-fund ...` — no ETH sent |
+| Initial `syncOrderIds` (10k block scan) | Skipped entirely |
+| WS listener + job queueing | Works normally — jobs execute but hit `safeSend` dry-run path |
 
----
-
-## Secrets and .env
-
-Do not commit `.env`, `deploy.final.yml`, or `prev.yml`. Use `.env.example` as a template. `.gitignore` excludes these.
+Use this to verify your config and contract state before going live. You'll see `safeSend[DRY_RUN]: simulated fn=... ok` or `simulation failed` in logs.
 
 ---
 
-## Quick Start (Local)
+## Quick start (local)
 
-1. `cp .env.example .env` and fill in values.
-2. Run `./test.sh` (builds app + image, runs Redis + executor via `deploy/local/docker-compose.yml`). Or run Redis locally, set `REDIS_URL=redis://localhost:6379`, then `npm install && npm run dev`.
-3. Health: `GET http://localhost:8000/healthz`.
+```bash
+cp .env.example .env
+# fill in ALCHEMY_API_KEY, DIAMOND_ADDRESS, FUNDING_EXECUTOR, Discord webhooks, ASSIGN_DELAY_IN_SECONDS
+
+# Option A — Docker (recommended)
+./test.sh
+
+# Option B — host Redis + local app
+docker run -d -p 6379:6379 redis:7-alpine
+REDIS_URL=redis://localhost:6379 npm run dev
+```
+
+Health check: `GET http://localhost:8000/healthz`
 
 ---
 
 ## How it works
-[![](https://mermaid.ink/img/pako:eNqNU8tu00AU_ZWrWbVSGtrEIYmFkBr3QaW-0kSyRM1iMr5xTJ2ZMDNuA2137IvoAlEWiB2LLpBYwJpP4QfgE7hjp6VBXTArz51zzj334VMmVIzMZ8NMnYgR1xb6a5EEOp1g4TBiPz9c_vp-AR1uEDqZEkcESiWspXysZAyBklZzYSP2bDGSJdHkg0TzyQhW9_eBJH5_fPMVcIoit0qDIAYpoCZKiXcnTjUKmyoJ2wd_o2GvoF9-ghAHPUqOFrZTY5HosKdj1PsZFxgDHqO0c4K94Ilzf_EFemKEcZ6hNmBOECdE_fENjODyXxPdwzLdNXTyLNvpQjfHHA1YlSQZOhY3Jk1kwb9P6o5W6LJfvXe9C5U-ctn_W-ZuA2Bp6fFZxFC-cF7guRqYiJ1Bd67SGYhamGudyuQ-WNeBICwDKOObaR2sr231Dhdc4e9eO7sHGKdEXpzZ6G8uFF15ew19zJAmOy6H7R73djdWt7ZLwNVn2JMbPM1glZo9txGdYOZQyaVyf4qBFRbDXonpwqMSY2hLEB7AEK0YOUThsASFMx079UHjWB3jrpLrWZqkA-ps2dYd1JSD1IHTwgVcCszWpxNasNipdYJ5KZMLgYbAznThqL95i6jOXMOQ6so1uueyZlZhiU5j5ludY4WNUY-5u7JTRyaHIxwT3KfPmOujiEXynDgTLp8qNb6haZUnI-YPeWbolk9ibpF-Ldfk26imYaEOVC4t871mrRBh_imbMn-l0aw2617d8xqth1694XkV9pLCrVq13fRajdbySqveWm7XzyvsVZF3ufqw3m5SsNGuNWrtWrt5_geNGFLL?type=png)](https://mermaid.live/edit#pako:eNqNU8tu00AU_ZWrWbVSGtrEIYmFkBr3QaW-0kSyRM1iMr5xTJ2ZMDNuA2137IvoAlEWiB2LLpBYwJpP4QfgE7hjp6VBXTArz51zzj334VMmVIzMZ8NMnYgR1xb6a5EEOp1g4TBiPz9c_vp-AR1uEDqZEkcESiWspXysZAyBklZzYSP2bDGSJdHkg0TzyQhW9_eBJH5_fPMVcIoit0qDIAYpoCZKiXcnTjUKmyoJ2wd_o2GvoF9-ghAHPUqOFrZTY5HosKdj1PsZFxgDHqO0c4K94Ilzf_EFemKEcZ6hNmBOECdE_fENjODyXxPdwzLdNXTyLNvpQjfHHA1YlSQZOhY3Jk1kwb9P6o5W6LJfvXe9C5U-ctn_W-ZuA2Bp6fFZxFC-cF7guRqYiJ1Bd67SGYhamGudyuQ-WNeBICwDKOObaR2sr231Dhdc4e9eO7sHGKdEXpzZ6G8uFF15ew19zJAmOy6H7R73djdWt7ZLwNVn2JMbPM1glZo9txGdYOZQyaVyf4qBFRbDXonpwqMSY2hLEB7AEK0YOUThsASFMx079UHjWB3jrpLrWZqkA-ps2dYd1JSD1IHTwgVcCszWpxNasNipdYJ5KZMLgYbAznThqL95i6jOXMOQ6so1uueyZlZhiU5j5ludY4WNUY-5u7JTRyaHIxwT3KfPmOujiEXynDgTLp8qNb6haZUnI-YPeWbolk9ibpF-Ldfk26imYaEOVC4t871mrRBh_imbMn-l0aw2617d8xqth1694XkV9pLCrVq13fRajdbySqveWm7XzyvsVZF3ufqw3m5SsNGuNWrtWrt5_geNGFLL)
 
-- **On `OrderPlaced`** — WS listener tracks the order ID in Redis, immediately enqueues `ToggleMerchantsOffline`, and enqueues `AssignMerchants` with a configurable delay.
-- **Every 1 min** — Sweeper checks all tracked orders: untrack completed/cancelled ones, auto-cancel expired ones.
-- **Every 1 hour** — Scanner resyncs the last 2500 blocks to catch any orders the WS listener may have missed.
-- All contract writes go through `safeSend()` — balance check → staticCall simulation → send → wait 1 confirmation → Telegram alert.
+### OrderPlaced event flow
+
+```
+WebSocket (Alchemy)
+  └─ OrderPlaced event
+       ├─ trackOrderId in Redis
+       ├─ enqueue ToggleMerchantsOffline (immediate)
+       │    └─ toggleWorker → getNonEligibleMerchantsByCircleId
+       │                    → removeNonEligibleMerchantsByCircleId (if any found)
+       │                    (30s cooldown per circleId — atomic Redis SET NX)
+       └─ enqueue AssignMerchants (after ASSIGN_DELAY_IN_SECONDS)
+            └─ assignWorker → getOrdersById (still PLACED?)
+                            → assignMerchants (if still PLACED)
+```
+
+### Scheduled jobs
+
+```
+Every 1 min — OrderSweeper
+  └─ getTrackedOrderIds from Redis
+  └─ Multicall3 batch: getOrdersById + isOrderExpired (2N → 1 eth_call)
+  └─ untrack completed/cancelled orders
+  └─ autoCancelExpiredOrders in batches of 20
+
+Every 1 hour — OrderScanner
+  └─ getLogs for OrderPlaced (last 2 500 blocks)
+  └─ Multicall3 batch: getOrdersById for all found orders
+  └─ union active IDs into Redis tracking set
+```
+
+### All contract writes
+
+```
+safeSend()
+  ├─ DRY_RUN? → staticCall only, return
+  ├─ !skipPresim? → staticCall, return false on revert (with Discord alert)
+  ├─ sendTransaction → if NONCE_EXPIRED/REPLACEMENT_UNDERPRICED: NonceManager.reset()
+  └─ tx.wait(1) with 3min timeout
+       ├─ timeout: check receipt directly, alert, return false
+       ├─ reverted: Discord fail alert, return false
+       └─ confirmed: Discord success alert, return true
+```
 
 ---
 
 ## API endpoints
 
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | `/healthz` | Liveness. |
-| GET | `/registry` | Contract automations (keys, functions, triggers). |
-| GET | `/tx/:hash` | Tx + receipt; revert reason on failure. |
-| GET | `/orders` | Tracked order IDs for sweeper. |
+|---|---|---|
+| GET | `/healthz` | Liveness check |
+| GET | `/registry` | All registered contract automations |
+| GET | `/tx/:hash` | Tx + receipt + revert reason |
+| GET | `/orders` | Order IDs currently tracked by sweeper |
 
 ---
 
 ## Deployment
 
-### Any VPS (Ubuntu)
+### VPS (recommended)
 
-See [deploy/vps/DEPLOY.md](deploy/vps/DEPLOY.md) for full step-by-step instructions.
+See [`deploy/vps/DEPLOY.md`](deploy/vps/DEPLOY.md) for full step-by-step instructions.
 
 ```bash
 # On the server
-mkdir ~/executor
-# copy deploy/vps/docker-compose.yml and deploy/vps/.env.example to ~/executor/
-nano ~/executor/.env       # fill in values
-docker compose -f ~/executor/docker-compose.yml up -d
+mkdir ~/executor && cd ~/executor
+nano docker-compose.yml   # paste deploy/vps/docker-compose.yml
+nano .env                 # paste deploy/vps/.env.example, fill in all values
+docker compose pull && docker compose up -d
+docker compose logs -f executor
+```
+
+### Build and push image
+
+```bash
+# Bump TAG in build_and_push.sh, then:
+./build_and_push.sh
+# Update the image tag in ~/executor/docker-compose.yml on the server, then:
+docker compose pull && docker compose up -d
 ```
 
 ### Akash
 
-1. Build and push: bump `TAG` in `build_and_push.sh` and run it.
-2. Update image tag in `deploy/akash/deploy.yml`.
-3. Generate SDL: `bash deploy/akash/generate_deploy.sh` → `deploy/akash/deploy.final.yml` (do not commit).
-4. Upload `deploy.final.yml` in Akash Console UI. Stack: redis + executor.
-
----
-
-## Testing
-
-* `npm run build` — ensure it compiles.
-* `./test.sh` — full stack; then `GET /healthz` and `GET /registry`.
-* Use **DRY_RUN=true** to run against mainnet without sending any transactions.
+Fill in `deploy.final.yml` (see comments in the file), build and push the image, then upload the SDL in [Akash Console](https://console.akash.network). **Do not commit the filled-in file to git.**
 
 ---
 
 ## License
 
-MIT. See [LICENSE](LICENSE). [CONTRIBUTING.md](CONTRIBUTING.md).
+MIT. See [LICENSE](LICENSE).
