@@ -1,24 +1,19 @@
 import { Worker } from 'bullmq';
 import { Contract } from 'ethers';
-import { AssignConfig } from '../../helpers/config';
-import { getAssignSigner } from '../../helpers/provider';
+import { ExecutorConfig } from '../../helpers/config';
 import { logger } from '../../helpers/logger';
 import { handlers, HandlerContext } from '../handlers';
 import { ContractJobName, ContractJobData } from '../types';
 import { initAssignQueue, connection } from '../index';
 import { DIAMOND_ABI } from '../../helpers/abi';
 import { sendOnFail } from '../../helpers/alerts';
+import { WalletManager, WalletRole } from '../../helpers/walletManager';
 
 const ASSIGN_QUEUE_NAME = 'assign-calls';
-// BullMQ renews the lock every lockDuration/2 while the job is running.
-// Truly stuck jobs get reclaimed after 3 min.
-// NOTE: no job-level timeout here — safeSend sends a real tx and awaits tx.wait(1).
-// A Promise.race timeout would cause a ghost tx: job retries while old tx.wait still runs
-// in background → duplicate tx submitted. BullMQ lock renewal keeps the job alive safely.
 const LOCK_DURATION_MS = 180_000; // 3 min
 
-export function startAssignWorker(config: AssignConfig) {
-    const signer = getAssignSigner(config);
+export function startAssignWorker(config: ExecutorConfig, walletManager: WalletManager) {
+    const signer = walletManager.getSigner(WalletRole.Assign);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
 
     initAssignQueue(config);
@@ -51,21 +46,18 @@ export function startAssignWorker(config: AssignConfig) {
                 const ok = await handler(job.data, ctx);
 
                 if (!ok) {
-                    const msg = `assign-worker: handler returned false for job ${name} jobId= ${job.id}`;
-                    logger.warn(msg);
-                    await sendOnFail(config, msg);
+                    // safeSend already sent a specific Discord alert — just log here
+                    logger.warn(`assign-worker: handler returned false for job ${name} jobId= ${job.id}`);
                 } else {
                     logger.info(`✅ assign-worker: job ok ${name} jobId= ${job.id}`);
                 }
             } catch (err: any) {
                 const reason = err?.stack ?? err?.message ?? String(err);
-                const msg =
-                    `Assign worker error\nJob= ${name}\nJobId= ${job.id}\nData= ${JSON.stringify(
-                        job.data,
-                    )}\n\n${reason}`;
-
-                logger.error(msg);
-                await sendOnFail(config, msg);
+                logger.error(`assign-worker error job=${name} jobId=${job.id}: ${reason}`);
+                // Only alert if safeSend hasn't already — avoids duplicate Discord noise
+                if (!(err as any)._alerted) {
+                    await sendOnFail(config, `Assign worker error\nJob= ${name}\nJobId= ${job.id}\n↳ ${err?.message ?? String(err)}`);
+                }
                 throw err;
             }
         },
@@ -85,9 +77,7 @@ export function startAssignWorker(config: AssignConfig) {
     );
 
     worker.on('failed', (job, err) =>
-        logger.warn(
-            `❌ assign-worker: failed jobId= ${job?.id} ${job?.name}: ${err?.message}`,
-        ),
+        logger.warn(`❌ assign-worker: failed jobId= ${job?.id} ${job?.name}: ${err?.message}`),
     );
 
     logger.info('▶️ assign-worker: started');

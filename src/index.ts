@@ -1,40 +1,60 @@
 import express from 'express';
-import dotenv, { config } from 'dotenv';
+import dotenv from 'dotenv';
 dotenv.config();
 
-import { loadCommonConfig, loadAssignConfig, loadOrderSweeperConfig, loadToggleConfig, loadToggleScheduleConfig } from './helpers/config';
+import { ethers } from 'ethers';
+import { loadExecutorConfig } from './helpers/config';
 import { startToggleWorker } from './queue/workers/toggleWorker';
 import { startAssignWorker } from './queue/workers/assignWorker';
-import { startToggleScheduleWorker } from './queue/workers/toggleScheduleWorker';
 import { startOrderSweeperWorker } from './queue/workers/orderSweeperWorker';
 import { startOrderScannerWorker } from './queue/workers/orderScannerWorker';
 import { logger } from './helpers/logger';
 import { CONTRACT_AUTOMATION_REGISTRY } from './helpers/registry';
-import { getBaseHttpProvider } from './helpers/provider';
+import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
 import { startListeners } from './listeners';
 import { startSchedulers } from './schedulers';
 import { getTrackedOrderIds, syncOrderIds } from './utils/orderTracker';
+import { WalletManager } from './helpers/walletManager';
+import { connection } from './queue';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
+const BALANCE_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 async function start() {
-    const commonConfig = loadCommonConfig();
+    const config = loadExecutorConfig();
 
-    if (commonConfig.dryRun) {
+    if (config.dryRun) {
         logger.warn('');
         logger.warn('====================================================');
         logger.warn('   DRY RUN MODE — NO TRANSACTIONS WILL BE SENT');
         logger.warn('====================================================');
         logger.warn('');
     }
-    const toggleConfig = loadToggleConfig();
-    const assignConfig = loadAssignConfig();
-    const toggleScheduleConfig = loadToggleScheduleConfig();
-    const orderSweeperConfig = loadOrderSweeperConfig();
 
-    // seed pending orders to order sweeper (skip in dry-run — no point scanning 10k blocks)
-    if (!commonConfig.dryRun) {
-        await syncOrderIds(commonConfig, 10000); // last 10000 blocks
+    const provider = getBaseHttpProvider(config);
+
+    // Init wallet manager — generates subwallets on first boot, loads from Redis on restart
+    const walletManager = new WalletManager();
+    await walletManager.init(provider, connection);
+
+    const fundingSigner = getFundingSigner(config);
+    const fundingAddress = await fundingSigner.getAddress();
+
+    // Announce startup — sends all wallet addresses to the success channel
+    await walletManager.announceStartup(config.discordOnSuccessWebhookUrl, fundingAddress);
+
+    // Balance monitor: check + auto-fund subwallets every 10 minutes (alerts → balance channel)
+    const minBalanceWei = ethers.parseEther(String(config.minBaseBalanceEth));
+    const runBalanceCheck = () =>
+        walletManager.checkAndFund(fundingSigner, minBalanceWei, config.discordBalanceWebhookUrl, config.dryRun)
+            .catch((err: any) => logger.error(`balance check error: ${err.message}`));
+
+    await runBalanceCheck(); // check once on boot
+    setInterval(runBalanceCheck, BALANCE_CHECK_INTERVAL_MS);
+
+    // Seed pending orders to order sweeper (skip in dry-run — no point scanning 10k blocks)
+    if (!config.dryRun) {
+        await syncOrderIds(config, 10000);
         logger.info('initial syncOrderIds done');
     } else {
         logger.info('dry-run: skipping initial syncOrderIds');
@@ -46,14 +66,11 @@ async function start() {
 
     app.get('/tx/:hash', async (req, res) => {
         const hash = req.params.hash;
-    
+
         try {
-            const provider = getBaseHttpProvider(commonConfig);
-    
             const tx = await provider.getTransaction(hash);
             const receipt = await provider.getTransactionReceipt(hash);
-    
-            // not seen by node at all
+
             if (!tx && !receipt) {
                 return res.status(404).json({
                     hash,
@@ -61,13 +78,11 @@ async function start() {
                     message: 'Transaction not found on this RPC',
                 });
             }
-    
-            // try to extract revert reason if failed
+
             let revertReason: string | null = null;
-    
+
             if (receipt && receipt.status === 0 && tx) {
                 try {
-                    // re-simulate the tx to get a revert reason (latest state)
                     await provider.call({
                         to: tx.to!,
                         from: tx.from,
@@ -82,7 +97,7 @@ async function start() {
                         String(err?.message ?? err);
                 }
             }
-    
+
             const meta = {
                 pending: !!tx && !receipt,
                 status: receipt?.status ?? null,
@@ -96,18 +111,10 @@ async function start() {
                 nonce: tx?.nonce ?? null,
                 value: tx?.value ? tx.value.toString() : null,
             };
-    
-            return res.json({
-                hash,
-                tx,
-                receipt,
-                meta,
-                revertReason,
-            });
+
+            return res.json({ hash, tx, receipt, meta, revertReason });
         } catch (err: any) {
-            logger.error(
-                `debug tx error for hash= ${hash} ${String(err?.message ?? err)}`,
-            );
+            logger.error(`debug tx error for hash= ${hash} ${String(err?.message ?? err)}`);
             return res.status(500).json({
                 hash,
                 error: 'debug_tx_error',
@@ -123,19 +130,19 @@ async function start() {
 
     app.listen(PORT, () => logger.info(`http server listening on port: ${PORT}`));
 
-    // ws listener
-    startListeners({ ...toggleConfig, ...assignConfig });
+    // WS listener
+    await startListeners(config);
     logger.info('listeners started');
 
-    startSchedulers();
+    await startSchedulers();
     logger.info('schedulers started');
 
-    // workers
-    startToggleWorker(toggleConfig);
-    startAssignWorker(assignConfig);
-    // startToggleScheduleWorker(toggleScheduleConfig);
-    startOrderSweeperWorker(orderSweeperConfig);
-    startOrderScannerWorker(commonConfig);
+    // Workers
+    startToggleWorker(config, walletManager);
+    startAssignWorker(config, walletManager);
+    // startToggleScheduleWorker(config, walletManager); // disabled — enable when needed
+    startOrderSweeperWorker(config, walletManager);
+    startOrderScannerWorker(config);
     logger.info('workers started');
 }
 

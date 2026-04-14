@@ -1,24 +1,22 @@
 import { Contract } from 'ethers';
-import { AssignConfig, ToggleConfig } from '../helpers/config';
+import { ToggleConfig, AssignConfig } from '../helpers/config';
 import { getBaseWsProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
 import { addToggleJob, addAssignJob } from '../queue';
 import { currencyMap, resolveOrderFromEventOrChain } from './utils';
 import { trackOrderId } from '../utils/orderTracker';
-import { sendTelegramMessage } from '../helpers/alerts';
+import { sendDiscordAlert } from '../helpers/discord';
 
 const ORDER_PLACED_EVENT = 'OrderPlaced';
 
 export async function attachOrderPlacedListener(config: ToggleConfig & AssignConfig) {
     const ASSIGN_DELAY_MS = config.assignDelayInSeconds * 1000 + 1_000; // 1s buffer
 
-    // Defined outside setup() so it survives reconnects and prevents double-reconnect
-    // across simultaneous onclose + onerror events
     let reconnectScheduled = false;
 
     const setup = () => {
-        reconnectScheduled = false; // reset so next disconnect can trigger a reconnect
+        reconnectScheduled = false;
         const wsProvider = getBaseWsProvider(config);
         const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, wsProvider);
 
@@ -40,7 +38,6 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
 
                 const currencyStr = String(order.currency);
                 const currencyName = currencyMap[currencyStr] ?? currencyStr;
-
                 const circleId = String(order.circleId);
 
                 logger.info(
@@ -50,19 +47,12 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
                 await addToggleJob(
                     config,
                     'ToggleMerchantsOffline',
-                    {
-                        orderId: orderIdStr,
-                        circleId: circleId,
-                        currency: currencyStr,
-                    },
+                    { orderId: orderIdStr, circleId: circleId, currency: currencyStr },
                     { jobId: `toggle-${orderIdStr}`, delayMs: 0 },
                 );
-                
-                logger.info(
-                    `OrderPlaced: enqueued ToggleMerchantsOffline for orderId=${orderIdStr}`,
-                );                
 
-                // delayed AssignMerchants (BullMQ delay, assign queue)
+                logger.info(`OrderPlaced: enqueued ToggleMerchantsOffline for orderId=${orderIdStr}`);
+
                 await addAssignJob(
                     config,
                     'AssignMerchants',
@@ -74,26 +64,18 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
                     `OrderPlaced: delayed AssignMerchants scheduled orderId=${orderIdStr} delay=${ASSIGN_DELAY_MS}ms`,
                 );
             } catch (err: any) {
-                logger.error(
-                    { error: String(err?.message ?? err) },
-                    'OrderPlaced listener error',
-                );
+                logger.error({ error: String(err?.message ?? err) }, 'OrderPlaced listener error');
             }
         };
 
         diamond.on(ORDER_PLACED_EVENT, handler);
-
         logger.info(`OrderPlaced listener attached for diamond: ${config.diamondAddress}`);
 
-        // notify on startup / reconnect
-        void sendTelegramMessage(
-            config.onFailBotToken,
-            config.onFailChanneld,
-            config.onSuccessTopicId,
-            '✅ WS connected: OrderPlaced listener attached',
-        ).catch(() => { });
+        void sendDiscordAlert(
+            config.discordOnSuccessWebhookUrl,
+            '✅ WS connected in Executor: OrderPlaced listener attached',
+        ).catch((e: any) => logger.warn(`OrderPlaced: Discord alert failed: ${e?.message}`));
 
-        // low-level ws handle to detect close/error and reconnect
         const ws: any =
             (wsProvider as any)._websocket ??
             (wsProvider as any).websocket ??
@@ -101,9 +83,7 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
             null;
 
         if (!ws) {
-            logger.warn(
-                '⚠️ OrderPlaced: ws handle not found; reconnect hooks not attached',
-            );
+            logger.warn('⚠️ OrderPlaced: ws handle not found; reconnect hooks not attached');
             return;
         }
 
@@ -114,21 +94,12 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
             const msg = `⚠️ OrderPlaced WS issue: ${reason}. Reconnecting in 5s...`;
             logger.error(msg);
 
-            void sendTelegramMessage(
-                config.onFailBotToken,
-                config.onFailChanneld,
-                config.onSuccessTopicId,
-                msg,
-            ).catch(() => { });
+            void sendDiscordAlert(config.discordOnFailWebhookUrl, msg).catch(() => {});
 
-            // remove listener for this diamond/WS instance
             diamond.removeAllListeners(ORDER_PLACED_EVENT);
 
-            // clean up the WS + provider to avoid leaks
             try {
-                if (typeof ws.close === 'function') {
-                    ws.close();
-                }
+                if (typeof ws.close === 'function') ws.close();
             } catch (e) {
                 logger.warn(`OrderPlaced: error closing ws: ${String(e)}`);
             }
@@ -156,6 +127,5 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
         };
     };
 
-    // initial attach
     setup();
 }

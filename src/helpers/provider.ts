@@ -1,5 +1,5 @@
 import { JsonRpcProvider, WebSocketProvider, Wallet, NonceManager } from 'ethers';
-import { AssignConfig, CommonConfig, OrderSweeperConfig, ToggleConfig, ToggleScheduleConfig } from './config';
+import { ExecutorConfig } from './config';
 import { logger } from './logger';
 
 const httpCache: Record<string, JsonRpcProvider> = {};
@@ -23,38 +23,20 @@ export function getWsProvider(rpcWs: string): WebSocketProvider {
     return provider;
 }
 
-export function getBaseHttpProvider(config: CommonConfig): JsonRpcProvider {
+export function getBaseHttpProvider(config: ExecutorConfig): JsonRpcProvider {
     const url = `https://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
     return getHttpProvider(url);
 }
 
-export function getBaseWsProvider(config: CommonConfig): WebSocketProvider {
+export function getBaseWsProvider(config: ExecutorConfig): WebSocketProvider {
     const url = `wss://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
     return getWsProvider(url);
 }
 
-// dedicated signer for ToggleMerchantsOffline
-// NonceManager ensures sequential nonce assignment — prevents collision if called concurrently
-export function getToggleSigner(config: ToggleConfig): NonceManager {
+/** Signer for the funding wallet — used only to auto-top-up subwallets, not for contract calls */
+export function getFundingSigner(config: ExecutorConfig): NonceManager {
     const provider = getBaseHttpProvider(config);
-    return new NonceManager(new Wallet(config.toggleExecutor, provider));
-}
-
-// dedicated signer for AssignMerchants
-export function getAssignSigner(config: AssignConfig): NonceManager {
-    const provider = getBaseHttpProvider(config);
-    return new NonceManager(new Wallet(config.assignExecutor, provider));
-}
-
-// dedicated signer for ToggleMerchantsOffline (scheduled)
-export function getToggleScheduleSigner(config: ToggleScheduleConfig): NonceManager {
-    const provider = getBaseHttpProvider(config);
-    return new NonceManager(new Wallet(config.toggleScheduleExecutor, provider));
-}
-
-export function getOrderSweeperSigner(config: OrderSweeperConfig): NonceManager {
-    const provider = getBaseHttpProvider(config);
-    return new NonceManager(new Wallet(config.orderSweeperExecutor, provider));
+    return new NonceManager(new Wallet(config.fundingExecutorKey, provider));
 }
 
 export async function withTimeout<T>(p: Promise<T>, ms = 100_000): Promise<T> {

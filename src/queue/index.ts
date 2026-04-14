@@ -66,6 +66,7 @@ export function initToggleScheduleQueue() {
             defaultJobOptions: {
                 removeOnComplete: true,
                 attempts: 3,
+                backoff: { type: 'exponential', delay: 1000 },
             },
         });
         logger.info(`queue: ${TOGGLE_SCHEDULE_QUEUE_NAME} initialised`);
@@ -80,6 +81,7 @@ export function initOrderSweeperQueue() {
             defaultJobOptions: {
                 removeOnComplete: true,
                 attempts: 3,
+                backoff: { type: 'exponential', delay: 2000 },
             },
         });
         logger.info(`queue: ${ORDER_SWEEPER_QUEUE_NAME} initialised`);

@@ -1,9 +1,9 @@
 import { CommonConfig } from '../helpers/config';
 import { logger } from '../helpers/logger';
-import { getBaseHttpProvider } from '../helpers/provider';
+import { getBaseHttpProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { Interface } from 'ethers';
-import { Contract } from 'ethers';
+import { getMulticall3 } from '../helpers/multicall';
 
 const STATUS_DONE_THRESHOLD = 3; // >= 3 -> completed / cancelled
 
@@ -28,12 +28,15 @@ export async function getPendingOrdersFromLogs(
             `getPendingOrdersFromLogs: scanning OrderPlaced logs from block=${fromBlock} to block=${toBlock}`,
         );
 
-        const logs = await provider.getLogs({
-            address: config.diamondAddress,
-            fromBlock,
-            toBlock,
-            topics: [topic],
-        });
+        const logs = await withTimeout(
+            provider.getLogs({
+                address: config.diamondAddress,
+                fromBlock,
+                toBlock,
+                topics: [topic],
+            }),
+            30_000,
+        );
 
         if (!logs.length) {
             logger.debug(
@@ -46,40 +49,67 @@ export async function getPendingOrdersFromLogs(
             `getPendingOrdersFromLogs: found ${logs.length} OrderPlaced logs in range [${fromBlock}, ${toBlock}]`,
         );
 
-        const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, provider);
-        const idsFromLogs: string[] = [];
-
+        // Parse all order IDs from logs first
+        const orderIds: string[] = [];
         for (const log of logs) {
             try {
                 const parsed = iface.parseLog(log);
                 const orderId = parsed?.args?.orderId?.toString?.();
-
-                if (!orderId) {
+                if (orderId) {
+                    orderIds.push(orderId);
+                } else {
                     logger.warn(
                         `getPendingOrdersFromLogs: missing orderId in parsed log block=${log?.blockNumber}`,
                     );
-                    continue;
                 }
-
-                const order = await diamond.getOrdersById(orderId);
-                const status = Number(order.status);
-
-                if (status >= STATUS_DONE_THRESHOLD) continue;
-
-                logger.debug(
-                    `getPendingOrdersFromLogs: active orderId=${orderId} (status=${status})`,
-                );
-                idsFromLogs.push(orderId);
             } catch (err: any) {
                 logger.warn(
-                    `getPendingOrdersFromLogs: failed to parse/load OrderPlaced log block=${log?.blockNumber}: ${String(
-                        err?.message ?? err,
-                    )}`,
+                    `getPendingOrdersFromLogs: failed to parse log block=${log?.blockNumber}: ${String(err?.message ?? err)}`,
                 );
             }
         }
 
-        return idsFromLogs;
+        if (!orderIds.length) return [];
+
+        // Batch all getOrdersById calls into a single Multicall3 eth_call (N → 1 RPC call)
+        const multicall3 = getMulticall3(provider);
+        const calls = orderIds.map(id => ({
+            target: config.diamondAddress,
+            allowFailure: true,
+            callData: iface.encodeFunctionData('getOrdersById', [BigInt(id)]),
+        }));
+
+        let results: any[];
+        try {
+            results = await withTimeout(multicall3.aggregate3.staticCall(calls), 30_000);
+        } catch (err: any) {
+            logger.error(`getPendingOrdersFromLogs: Multicall3 batch failed: ${err.message}`);
+            return [];
+        }
+
+        const activeIds: string[] = [];
+        for (let i = 0; i < orderIds.length; i++) {
+            const id = orderIds[i];
+            const result = results[i];
+
+            if (!result.success) {
+                logger.warn(`getPendingOrdersFromLogs: getOrdersById multicall failed for orderId=${id}`);
+                continue;
+            }
+
+            try {
+                const [order] = iface.decodeFunctionResult('getOrdersById', result.returnData);
+                const status = Number(order.status);
+                if (status < STATUS_DONE_THRESHOLD) {
+                    logger.debug(`getPendingOrdersFromLogs: active orderId=${id} (status=${status})`);
+                    activeIds.push(id);
+                }
+            } catch (err: any) {
+                logger.warn(`getPendingOrdersFromLogs: decode failed for orderId=${id}: ${err.message}`);
+            }
+        }
+
+        return activeIds;
     } catch (err: any) {
         logger.error(
             `getPendingOrdersFromLogs: failed for range [${fromBlock}, ${toBlock}]: ${String(
@@ -89,4 +119,3 @@ export async function getPendingOrdersFromLogs(
         return [];
     }
 }
-

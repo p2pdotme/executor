@@ -1,7 +1,6 @@
 import { Worker } from 'bullmq';
 import { Contract } from 'ethers';
 import { ToggleScheduleConfig } from '../../helpers/config';
-import { getToggleScheduleSigner } from '../../helpers/provider';
 import { logger } from '../../helpers/logger';
 import {
     TOGGLE_SCHEDULE_QUEUE_NAME,
@@ -11,13 +10,14 @@ import {
 import { DIAMOND_ABI } from '../../helpers/abi';
 import { safeSend } from '../../helpers/safeSend';
 import { ethers } from 'ethers';
+import { WalletManager, WalletRole } from '../../helpers/walletManager';
 
 const LOCK_DURATION_MS = 30_000; // 30s
 
 const LIMIT = 300;
 
-export function startToggleScheduleWorker(config: ToggleScheduleConfig) {
-    const signer = getToggleScheduleSigner(config);
+export function startToggleScheduleWorker(config: ToggleScheduleConfig, walletManager: WalletManager) {
+    const signer = walletManager.getSigner(WalletRole.Toggle);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
 
     initToggleScheduleQueue();
