@@ -2,7 +2,8 @@
 export type ContractJobName =
     | 'ToggleMerchantsOffline'
     | 'AssignMerchants'
-    | 'GetOrdersById';
+    | 'GetOrdersById'
+    | 'IssueCashbackCredit';
 
 // Toggle-offline job payload
 export type ToggleOfflineJobData = {
@@ -22,6 +23,14 @@ export type ToggleScheduleJobData = {
     currency: string;
 };
 
+// IssueCashbackCredit job payload — the BUY cashback programme handler
+// (see queue/handlers.ts → issueCashbackCredit) consumes this.
+export type IssueCashbackCreditJobData = {
+    orderId: string;
+    user: string; // 0x-prefixed
+    amount: string; // USDC 6-decimals as a uint256 string
+};
+
 // Empty payload jobs if needed
 export type EmptyJobData = Record<string, never>;
 
@@ -29,4 +38,5 @@ export type ContractJobData =
     | ToggleOfflineJobData
     | OrderJobData
     | ToggleScheduleJobData
+    | IssueCashbackCreditJobData
     | EmptyJobData;
