@@ -7,12 +7,14 @@ export enum WalletRole {
     Toggle = 'toggle',
     Assign = 'assign',
     Sweeper = 'sweeper',
+    Cashback = 'cashback',
 }
 
 const ROLE_LABELS: Record<WalletRole, string> = {
     [WalletRole.Toggle]: 'Toggle',
     [WalletRole.Assign]: 'Assign',
     [WalletRole.Sweeper]: 'Sweeper',
+    [WalletRole.Cashback]: 'Cashback',
 };
 
 // When a subwallet drops below minBalance, auto-top-up to this target
@@ -38,6 +40,10 @@ export class WalletManager {
             [WalletRole.Toggle]: process.env.TOGGLE_EXECUTOR,
             [WalletRole.Assign]: process.env.ASSIGN_EXECUTOR,
             [WalletRole.Sweeper]: process.env.ORDER_SWEEPER_EXECUTOR,
+            // Must match the address whitelisted via
+            // CashbackIntegrator.setCreditIssuer(issuer, true). Generated +
+            // persisted on first boot if unset, like the others.
+            [WalletRole.Cashback]: process.env.CASHBACK_EXECUTOR,
         };
 
         for (const role of Object.values(WalletRole) as WalletRole[]) {
@@ -92,10 +98,11 @@ export class WalletManager {
         const addr = await this.getAddresses();
         const msg = [
             '🟢 **Executor started**',
-            `Funding: \`${fundingAddress}\`  ← fund this`,
-            `Toggle:  \`${addr[WalletRole.Toggle]}\``,
-            `Assign:  \`${addr[WalletRole.Assign]}\``,
-            `Sweeper: \`${addr[WalletRole.Sweeper]}\``,
+            `Funding:  \`${fundingAddress}\`  ← fund this`,
+            `Toggle:   \`${addr[WalletRole.Toggle]}\``,
+            `Assign:   \`${addr[WalletRole.Assign]}\``,
+            `Sweeper:  \`${addr[WalletRole.Sweeper]}\``,
+            `Cashback: \`${addr[WalletRole.Cashback]}\`  ← whitelist via integrator.setCreditIssuer`,
         ].join('\n');
         logger.info(msg);
         await sendDiscordAlert(discordOnSuccessWebhookUrl, msg);

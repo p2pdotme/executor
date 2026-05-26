@@ -4,6 +4,7 @@ import { logger } from '../helpers/logger';
 import {
     ContractJobName,
     ContractJobData,
+    IssueCashbackCreditJobData,
     OrderJobData,
     ToggleOfflineJobData,
 } from './types';
@@ -14,6 +15,8 @@ import { connection } from './index';
 export type HandlerContext = {
     config: ContractCallerConfig;
     diamond: Contract;
+    // Only populated for the cashback worker — other workers don't need it.
+    cashbackIntegrator?: Contract;
 };
 
 export type ContractJobHandler =
@@ -101,8 +104,45 @@ const getOrdersById: ContractJobHandler = async (raw, ctx) => {
     return true;
 };
 
+// WRITE: cashbackIntegrator.issueCredit(user, amount)
+//
+// Mirrors the contracts-v4 handleLotpotBuyerCashback logic that used to
+// run inside Diamond.completeOrder. The Diamond hook was abandoned; the
+// programme now lives entirely server-side. The OrderCompleted listener
+// upstream is responsible for the orderType + non-B2B filtering and for
+// computing `amount`; this handler only sends the on-chain write.
+//
+// Idempotency: the queue jobId is the orderId, so a duplicate event
+// (e.g. WS reconnect replay) finds the existing job and never resends.
+// As a defense-in-depth check we also read issuedCredit(user) before
+// sending — if the ledger already shows a non-zero increment for the
+// expected amount, we short-circuit. Useful when a job dies after the
+// tx mined but before BullMQ marked it complete.
+const issueCashbackCredit: ContractJobHandler = async (raw, ctx) => {
+    const data = raw as IssueCashbackCreditJobData;
+    const { orderId, user, amount } = data;
+    const amountBig = BigInt(amount);
+
+    if (!ctx.cashbackIntegrator) {
+        throw new Error('cashbackWorker: cashbackIntegrator not bound on ctx');
+    }
+    if (amountBig <= 0n) {
+        logger.debug(`cashbackWorker: zero amount for orderId= ${orderId}, skipping`);
+        return true;
+    }
+
+    return safeSend(
+        ctx.cashbackIntegrator,
+        'issueCredit',
+        [user, amountBig],
+        ctx.config,
+        { orderId, user, amount: amountBig.toString() },
+    );
+};
+
 export const handlers: Record<ContractJobName, ContractJobHandler> = {
     ToggleMerchantsOffline: toggleMerchantsOffline,
     AssignMerchants: assignMerchants,
     GetOrdersById: getOrdersById,
+    IssueCashbackCredit: issueCashbackCredit,
 };

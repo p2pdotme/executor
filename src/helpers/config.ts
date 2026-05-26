@@ -9,6 +9,13 @@ export type ExecutorConfig = {
     minBaseBalanceEth: number;
     dryRun: boolean;
     assignDelayInSeconds: number;
+    // B2B cashback programme — credits a bps cut of every completed non-B2B
+    // BUY back to the user via integrator.issueCredit(). The programme is
+    // OFF when integrator address is empty or bps is 0; the OrderCompleted
+    // listener silently skips in that case so the executor stays useful
+    // for deploys that don't want the programme enabled.
+    cashbackIntegratorAddress: string;
+    cashbackBps: number;
 };
 
 // Backward-compat aliases — all workers/helpers use ExecutorConfig under the hood
@@ -41,6 +48,18 @@ export function loadExecutorConfig(): ExecutorConfig {
     if (Number.isNaN(assignDelayInSeconds) || assignDelayInSeconds <= 0) {
         throw new Error('ASSIGN_DELAY_IN_SECONDS must be a positive number');
     }
+    // Both optional. When either is unset/zero the cashback listener
+    // short-circuits — keeps the executor usable for deploys that
+    // don't have the programme enabled. When set, both must be valid.
+    const cashbackIntegratorAddress = (process.env.CASHBACK_INTEGRATOR_ADDRESS ?? '').trim();
+    const cashbackBpsRaw = (process.env.CASHBACK_BPS ?? '0').trim();
+    const cashbackBps = Number(cashbackBpsRaw);
+    if (Number.isNaN(cashbackBps) || cashbackBps < 0 || cashbackBps > 10_000) {
+        throw new Error('CASHBACK_BPS must be an integer in [0, 10000]');
+    }
+    if (cashbackIntegratorAddress && !/^0x[0-9a-fA-F]{40}$/.test(cashbackIntegratorAddress)) {
+        throw new Error('CASHBACK_INTEGRATOR_ADDRESS must be a 0x-prefixed 20-byte address');
+    }
     return {
         alchemyApiKey,
         diamondAddress,
@@ -51,6 +70,8 @@ export function loadExecutorConfig(): ExecutorConfig {
         minBaseBalanceEth,
         dryRun,
         assignDelayInSeconds,
+        cashbackIntegratorAddress,
+        cashbackBps,
     };
 }
 

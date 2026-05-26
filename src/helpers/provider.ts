@@ -24,12 +24,22 @@ export function getWsProvider(rpcWs: string): WebSocketProvider {
 }
 
 export function getBaseHttpProvider(config: ExecutorConfig): JsonRpcProvider {
-    const url = `https://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
+    // RPC_HTTP_URL overrides the Alchemy URL — set it to your fork's
+    // HTTP endpoint (e.g. http://localhost:8545) when testing against
+    // anvil/hardhat. Production leaves it unset → falls back to Alchemy.
+    const url =
+        process.env.RPC_HTTP_URL ??
+        `https://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
     return getHttpProvider(url);
 }
 
 export function getBaseWsProvider(config: ExecutorConfig): WebSocketProvider {
-    const url = `wss://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
+    // RPC_WS_URL counterpart. anvil --port 8545 serves WS on the same
+    // port (ws://localhost:8545); for hardhat node use the explicit
+    // WS endpoint your config exposes.
+    const url =
+        process.env.RPC_WS_URL ??
+        `wss://base-mainnet.g.alchemy.com/v2/${config.alchemyApiKey}`;
     return getWsProvider(url);
 }
 
