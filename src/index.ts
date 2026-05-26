@@ -8,6 +8,7 @@ import { startToggleWorker } from './queue/workers/toggleWorker';
 import { startAssignWorker } from './queue/workers/assignWorker';
 import { startOrderSweeperWorker } from './queue/workers/orderSweeperWorker';
 import { startOrderScannerWorker } from './queue/workers/orderScannerWorker';
+import { startCashbackWorker } from './queue/workers/cashbackWorker';
 import { logger } from './helpers/logger';
 import { CONTRACT_AUTOMATION_REGISTRY } from './helpers/registry';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
@@ -143,6 +144,7 @@ async function start() {
     // startToggleScheduleWorker(config, walletManager); // disabled — enable when needed
     startOrderSweeperWorker(config, walletManager);
     startOrderScannerWorker(config);
+    startCashbackWorker(config, walletManager); // no-op when programme env unset
     logger.info('workers started');
 }
 

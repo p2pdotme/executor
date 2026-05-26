@@ -346,6 +346,56 @@ export const DIAMOND_EVENTS = [
         ],
         "name": "MerchantAssignedNewOrder",
         "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            { "indexed": true, "internalType": "uint256", "name": "orderId", "type": "uint256" },
+            { "indexed": true, "internalType": "address", "name": "user", "type": "address" },
+            { "indexed": false, "internalType": "uint256", "name": "completedTimestamp", "type": "uint256" },
+            {
+                "components": [
+                    { "internalType": "uint256", "name": "amount", "type": "uint256" },
+                    { "internalType": "uint256", "name": "fiatAmount", "type": "uint256" },
+                    { "internalType": "uint256", "name": "placedTimestamp", "type": "uint256" },
+                    { "internalType": "uint256", "name": "completedTimestamp", "type": "uint256" },
+                    { "internalType": "uint256", "name": "userCompletedTimestamp", "type": "uint256" },
+                    { "internalType": "address", "name": "acceptedMerchant", "type": "address" },
+                    { "internalType": "address", "name": "user", "type": "address" },
+                    { "internalType": "address", "name": "recipientAddr", "type": "address" },
+                    { "internalType": "string", "name": "pubkey", "type": "string" },
+                    { "internalType": "string", "name": "encUpi", "type": "string" },
+                    { "internalType": "bool", "name": "userCompleted", "type": "bool" },
+                    { "internalType": "enum OrderProcessorStorage.OrderStatus", "name": "status", "type": "uint8" },
+                    { "internalType": "enum OrderProcessorStorage.OrderType", "name": "orderType", "type": "uint8" },
+                    {
+                        "components": [
+                            { "internalType": "enum OrderProcessorStorage.Entity", "name": "raisedBy", "type": "uint8" },
+                            { "internalType": "enum OrderProcessorStorage.DisputeStatus", "name": "status", "type": "uint8" },
+                            { "internalType": "uint256", "name": "redactTransId", "type": "uint256" },
+                            { "internalType": "uint256", "name": "accountNumber", "type": "uint256" }
+                        ],
+                        "internalType": "struct OrderProcessorStorage.Dispute",
+                        "name": "disputeInfo",
+                        "type": "tuple"
+                    },
+                    { "internalType": "uint256", "name": "id", "type": "uint256" },
+                    { "internalType": "string", "name": "userPubKey", "type": "string" },
+                    { "internalType": "string", "name": "encMerchantUpi", "type": "string" },
+                    { "internalType": "uint256", "name": "acceptedAccountNo", "type": "uint256" },
+                    { "internalType": "uint256[]", "name": "assignedAccountNos", "type": "uint256[]" },
+                    { "internalType": "bytes32", "name": "currency", "type": "bytes32" },
+                    { "internalType": "uint256", "name": "preferredPaymentChannelConfigId", "type": "uint256" },
+                    { "internalType": "uint256", "name": "circleId", "type": "uint256" }
+                ],
+                "indexed": false,
+                "internalType": "struct OrderProcessorStorage.Order",
+                "name": "_order",
+                "type": "tuple"
+            }
+        ],
+        "name": "OrderCompleted",
+        "type": "event"
     }
 ]
 
@@ -629,6 +679,16 @@ export const DIAMOND_FUNCTIONS = [
                 "type": "address[]"
             }
         ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        // Returns the B2B integrator address that placed this order, or
+        // address(0) for organic (non-B2B) orders. The cashback programme
+        // only credits non-B2B BUYs, so the worker filters on a zero return.
+        "inputs": [{ "internalType": "uint256", "name": "orderId", "type": "uint256" }],
+        "name": "getOrderIntegrator",
+        "outputs": [{ "internalType": "address", "name": "", "type": "address" }],
         "stateMutability": "view",
         "type": "function"
     },

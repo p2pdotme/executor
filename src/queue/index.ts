@@ -9,6 +9,8 @@ export const ASSIGN_QUEUE_NAME = 'assign-calls';
 export const TOGGLE_SCHEDULE_QUEUE_NAME = 'toggle-schedule-calls';
 export const ORDER_SWEEPER_QUEUE_NAME = 'order-sweeper-calls';
 export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
+// B2B cashback programme — see queue/workers/cashbackWorker.ts.
+export const CASHBACK_QUEUE_NAME = 'cashback-calls';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
 export const connection = new IORedis(REDIS_URL, {
@@ -24,6 +26,7 @@ export let assignQueue: Queue<ContractJobData>;
 export let toggleScheduleQueue: Queue<ContractJobData>;
 export let orderSweeperQueue: Queue<any>;
 export let orderScannerQueue: Queue<any>;
+export let cashbackQueue: Queue<ContractJobData>;
 
 export function initToggleQueue(_config?: ToggleConfig) {
     if (!toggleQueue) {
@@ -87,6 +90,27 @@ export function initOrderSweeperQueue() {
         logger.info(`queue: ${ORDER_SWEEPER_QUEUE_NAME} initialised`);
     }
     return orderSweeperQueue;
+}
+
+export function initCashbackQueue() {
+    if (!cashbackQueue) {
+        cashbackQueue = new Queue<ContractJobData>(CASHBACK_QUEUE_NAME, {
+            connection,
+            defaultJobOptions: {
+                removeOnComplete: true,
+                removeOnFail: { count: 100 },
+                // 5 attempts with exponential backoff — issueCredit is gated to a
+                // single whitelisted wallet and the txs are tiny, so transient
+                // RPC/nonce issues are the only realistic failure mode. A
+                // permanent revert (e.g. issuer not whitelisted) blows through
+                // all attempts and lands in DLQ via removeOnFail.
+                attempts: 5,
+                backoff: { type: 'exponential', delay: 2000 },
+            },
+        });
+        logger.info(`queue: ${CASHBACK_QUEUE_NAME} initialised`);
+    }
+    return cashbackQueue;
 }
 
 export function initOrderScannerQueue() {
@@ -159,6 +183,39 @@ export async function addAssignJob(
     } else {
         logger.info(
             `queue(${ASSIGN_QUEUE_NAME}): added job name= ${name} jobId= ${job.id} delayMs= ${delay}`,
+        );
+    }
+
+    return job;
+}
+
+export async function addCashbackJob(
+    name: string, // expected: 'IssueCashbackCredit'
+    data: ContractJobData,
+    opts?: { jobId?: string },
+) {
+    const queue = initCashbackQueue();
+
+    const job: Job<ContractJobData> = await queue.add(
+        name,
+        data,
+        {
+            // jobId pins idempotency to the orderId — see orderCompleted
+            // listener. A duplicate event for the same orderId (e.g. WS
+            // reconnect replay) returns the existing job state instead of
+            // re-enqueueing, so issueCredit is at-most-once per order.
+            jobId: opts?.jobId,
+        },
+    );
+
+    const state = await job.getState();
+    if (state !== 'waiting' && state !== 'delayed') {
+        logger.info(
+            `queue(${CASHBACK_QUEUE_NAME}): job DEDUPED — jobId= ${job.id} already in state= ${state} (this is OK — cashback should fire once per order)`,
+        );
+    } else {
+        logger.info(
+            `queue(${CASHBACK_QUEUE_NAME}): added job name= ${name} jobId= ${job.id}`,
         );
     }
 
