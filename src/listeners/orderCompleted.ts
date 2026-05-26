@@ -55,10 +55,14 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 if (!programmeOn) return;
 
                 // Parse the raw log via the contract's ABI rather than
-                // trusting positional handler args. Named access (orderId,
-                // user, _order) is robust to ABI field reorders and lets
-                // the type-checker catch typos. Mirrors the parseLog
+                // trusting positional handler args. Mirrors the parseLog
                 // pattern already used in listeners/utils.ts.
+                //
+                // Subtle: the indexed `user` topic on this event is
+                // msg.sender of completeOrder() — the MERCHANT, not the
+                // buyer. The buyer lives on the order tuple as
+                // `_order.user`. We pull from there so cashback credits
+                // the right address.
                 const evtLog = payload.log;
                 if (!evtLog || !evtLog.topics || evtLog.data === undefined) return;
                 const parsed = diamond.interface.parseLog({
@@ -66,11 +70,11 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                     data: evtLog.data,
                 });
                 if (!parsed || parsed.name !== ORDER_COMPLETED_EVENT) return;
-                const { orderId, user, _order: order } = parsed.args as unknown as {
+                const { orderId, _order: order } = parsed.args as unknown as {
                     orderId: bigint;
-                    user: string;
-                    _order: { amount: bigint; orderType: bigint };
+                    _order: { amount: bigint; orderType: bigint; user: string };
                 };
+                const user = order.user;
                 const txHash = evtLog.transactionHash;
 
                 if (orderId === undefined || !user || !order) return;
