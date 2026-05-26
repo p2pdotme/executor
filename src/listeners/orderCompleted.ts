@@ -54,15 +54,24 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 if (!payload || typeof payload !== 'object') return;
                 if (!programmeOn) return;
 
-                // ethers v6 indexed-event handler signature:
-                //   (orderId, user, completedTimestamp, _order, payload)
-                // We use the Order tuple for amount + orderType (cheap, no
-                // extra eth_call). For the B2B filter we DO need a read —
-                // there's no flag on the tuple for orderIntegrator binding.
-                const orderId = args[0];
-                const user = args[1];
-                const order = args[3];
-                const txHash = payload.log?.transactionHash;
+                // Parse the raw log via the contract's ABI rather than
+                // trusting positional handler args. Named access (orderId,
+                // user, _order) is robust to ABI field reorders and lets
+                // the type-checker catch typos. Mirrors the parseLog
+                // pattern already used in listeners/utils.ts.
+                const evtLog = payload.log;
+                if (!evtLog || !evtLog.topics || evtLog.data === undefined) return;
+                const parsed = diamond.interface.parseLog({
+                    topics: [...evtLog.topics],
+                    data: evtLog.data,
+                });
+                if (!parsed || parsed.name !== ORDER_COMPLETED_EVENT) return;
+                const { orderId, user, _order: order } = parsed.args as unknown as {
+                    orderId: bigint;
+                    user: string;
+                    _order: { amount: bigint; orderType: bigint };
+                };
+                const txHash = evtLog.transactionHash;
 
                 if (orderId === undefined || !user || !order) return;
                 if (Number(order.orderType) !== ORDER_TYPE_BUY) return;
