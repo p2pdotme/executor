@@ -10,10 +10,11 @@ export type ExecutorConfig = {
     dryRun: boolean;
     assignDelayInSeconds: number;
     // B2B cashback programme — credits a bps cut of every completed non-B2B
-    // BUY back to the user via integrator.issueCredit(). The programme is
-    // OFF when integrator address is empty or bps is 0; the OrderCompleted
-    // listener silently skips in that case so the executor stays useful
-    // for deploys that don't want the programme enabled.
+    // BUY or SELL back to the order's user (buyer for BUY, seller for SELL)
+    // via integrator.issueCredit(). The programme is OFF when integrator
+    // address is empty or bps is 0; the OrderCompleted listener silently
+    // skips in that case so the executor stays useful for deploys that
+    // don't want the programme enabled.
     cashbackIntegratorAddress: string;
     cashbackBps: number;
 };

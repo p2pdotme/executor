@@ -21,10 +21,10 @@ Event-driven + schedule-based contract automation for P2P.me on Base. Listens to
 
 ## What it does
 
-1. **Event listening** — Subscribes to the Diamond contract on Base (WebSocket). On `OrderPlaced`, immediately enqueues `ToggleMerchantsOffline` and enqueues `AssignMerchants` after a configurable delay. On `OrderCompleted` (when the B2B cashback programme is enabled), enqueues `IssueCashbackCredit` for eligible non-B2B BUY orders.
+1. **Event listening** — Subscribes to the Diamond contract on Base (WebSocket). On `OrderPlaced`, immediately enqueues `ToggleMerchantsOffline` and enqueues `AssignMerchants` after a configurable delay. On `OrderCompleted` (when the B2B cashback programme is enabled), enqueues `IssueCashbackCredit` for eligible non-B2B BUY and SELL orders.
 2. **Order sweeper** — Every 1 minute: batch-checks all tracked orders via Multicall3, untracking completed/cancelled ones and auto-cancelling expired ones.
 3. **Order scanner** — Every 1 hour: rescans the last 2 500 blocks to catch any orders the WS listener may have missed.
-4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY back to the user via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`).
+4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`).
 5. **Auto-funded wallets** — Four subwallets (toggle, assign, sweeper, cashback) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
 6. **HTTP API** — Health, registry, tx debug by hash, list tracked orders.
 
@@ -122,7 +122,7 @@ Copy `.env.example` to `.env` for local dev. For Akash, set these in the SDL `en
 | `DRY_RUN` | `true` to simulate only — no transactions sent (default `false`) |
 | `PORT` | HTTP port (default `8000`) |
 | `CASHBACK_INTEGRATOR_ADDRESS` | B2B cashback programme: integrator address to call `issueCredit` on. Leave unset (or set `CASHBACK_BPS=0`) to disable the programme entirely — the OrderCompleted listener silently no-ops. |
-| `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
+| `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
 
 ### Optional — bring your own subwallet keys
 

@@ -10,6 +10,7 @@ const ORDER_COMPLETED_EVENT = 'OrderCompleted';
 
 // OrderProcessorStorage.OrderType enum: { BUY=0, SELL=1, PAY=2 }
 const ORDER_TYPE_BUY = 0;
+const ORDER_TYPE_SELL = 1;
 const BPS_DENOMINATOR = 10_000n;
 
 /**
@@ -20,8 +21,9 @@ const BPS_DENOMINATOR = 10_000n;
  * `integrator.issueCredit(user, amount)` write signed by the whitelisted
  * cashback wallet.
  *
- * Filtering matches the original contract hook:
- *   - orderType == BUY
+ * Filtering matches the original contract hook, extended to also credit
+ * SELL completions to the seller (`_order.user`):
+ *   - orderType == BUY or SELL (PAY is excluded)
  *   - non-B2B (Diamond.getOrderIntegrator(orderId) == address(0))
  *   - amount > 0 after applying bps
  *
@@ -60,7 +62,8 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 //
                 // Subtle: the indexed `user` topic on this event is
                 // msg.sender of completeOrder() — the MERCHANT, not the
-                // buyer. The buyer lives on the order tuple as
+                // counterparty we want to credit. The buyer (for BUY) or
+                // the seller (for SELL) lives on the order tuple as
                 // `_order.user`. We pull from there so cashback credits
                 // the right address.
                 const evtLog = payload.log;
@@ -78,7 +81,8 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 const txHash = evtLog.transactionHash;
 
                 if (orderId === undefined || !user || !order) return;
-                if (Number(order.orderType) !== ORDER_TYPE_BUY) return;
+                const orderType = Number(order.orderType);
+                if (orderType !== ORDER_TYPE_BUY && orderType !== ORDER_TYPE_SELL) return;
 
                 const amount: bigint = order.amount;
                 const cashback = (amount * BigInt(config.cashbackBps)) / BPS_DENOMINATOR;
@@ -111,8 +115,9 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                     return;
                 }
 
+                const orderTypeLabel = orderType === ORDER_TYPE_BUY ? 'BUY' : 'SELL';
                 logger.info(
-                    `OrderCompleted (eligible BUY): orderId=${orderId} user=${user} amount=${amount} cashback=${cashback} txHash=${txHash}`,
+                    `OrderCompleted (eligible ${orderTypeLabel}): orderId=${orderId} user=${user} amount=${amount} cashback=${cashback} txHash=${txHash}`,
                 );
 
                 await addCashbackJob(

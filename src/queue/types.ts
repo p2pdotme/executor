@@ -23,7 +23,7 @@ export type ToggleScheduleJobData = {
     currency: string;
 };
 
-// IssueCashbackCredit job payload — the BUY cashback programme handler
+// IssueCashbackCredit job payload — the BUY/SELL cashback programme handler
 // (see queue/handlers.ts → issueCashbackCredit) consumes this.
 export type IssueCashbackCreditJobData = {
     orderId: string;
