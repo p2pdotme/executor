@@ -29,9 +29,11 @@ export type ExecutorConfig = {
 // Built-in per-currency cashback overrides. These ship as defaults so the
 // business rule holds even if the operator forgets to set the env var; the
 // CASHBACK_BPS_BY_CURRENCY env (parsed below) takes precedence per currency.
-//   ARS (Argentina): 1% (100 bps) instead of the default 2%.
+// ARS (Argentina) and MEX (Mexico) have tighter spreads where users were
+// farming lotpot credits, so both credit 1% (100 bps) vs the default 2%.
 const DEFAULT_CASHBACK_BPS_BY_CURRENCY: Record<string, number> = {
     ARS: 100,
+    MEX: 100,
 };
 
 // Backward-compat aliases — all workers/helpers use ExecutorConfig under the hood
