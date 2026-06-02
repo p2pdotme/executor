@@ -1,4 +1,4 @@
-import { Contract } from 'ethers';
+import { Contract, decodeBytes32String } from 'ethers';
 import { ExecutorConfig } from '../helpers/config';
 import { getBaseWsProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
@@ -12,6 +12,27 @@ const ORDER_COMPLETED_EVENT = 'OrderCompleted';
 const ORDER_TYPE_BUY = 0;
 const ORDER_TYPE_SELL = 1;
 const BPS_DENOMINATOR = 10_000n;
+
+// Decode the order's bytes32 currency into its symbol (e.g. "ARS"). Returns
+// '' when the field is empty/unset or not a valid bytes32 string so callers
+// can safely fall back to the default cashback rate.
+function decodeCurrency(currency: unknown): string {
+    if (typeof currency !== 'string' || !currency) return '';
+    try {
+        return decodeBytes32String(currency).trim().toUpperCase();
+    } catch {
+        return '';
+    }
+}
+
+// Resolve the cashback bps for an order: a per-currency override when one is
+// configured for the order's currency, otherwise the default cashbackBps.
+function resolveCashbackBps(config: ExecutorConfig, currencyCode: string): number {
+    if (currencyCode && currencyCode in config.cashbackBpsByCurrency) {
+        return config.cashbackBpsByCurrency[currencyCode];
+    }
+    return config.cashbackBps;
+}
 
 /**
  * B2B cashback programme listener — server-side mirror of the
@@ -42,8 +63,15 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
         const wsProvider = getBaseWsProvider(config);
         const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, wsProvider);
 
+        // Programme is on when an integrator is configured AND at least one
+        // positive rate exists — either the default bps or a per-currency
+        // override (an operator may zero the default but still credit ARS).
+        const anyCurrencyOverridePositive = Object.values(
+            config.cashbackBpsByCurrency,
+        ).some((bps) => bps > 0);
         const programmeOn =
-            !!config.cashbackIntegratorAddress && config.cashbackBps > 0;
+            !!config.cashbackIntegratorAddress &&
+            (config.cashbackBps > 0 || anyCurrencyOverridePositive);
         if (!programmeOn) {
             logger.info(
                 'OrderCompleted: cashback programme disabled (env unset) — listener attached as no-op so toggling env later does not require restart',
@@ -75,7 +103,12 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 if (!parsed || parsed.name !== ORDER_COMPLETED_EVENT) return;
                 const { orderId, _order: order } = parsed.args as unknown as {
                     orderId: bigint;
-                    _order: { amount: bigint; orderType: bigint; user: string };
+                    _order: {
+                        amount: bigint;
+                        orderType: bigint;
+                        user: string;
+                        currency: string;
+                    };
                 };
                 const user = order.user;
                 const txHash = evtLog.transactionHash;
@@ -84,8 +117,19 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 const orderType = Number(order.orderType);
                 if (orderType !== ORDER_TYPE_BUY && orderType !== ORDER_TYPE_SELL) return;
 
+                // Resolve the rate per the order's currency, falling back to
+                // the default bps. ARS (Argentina) is 1% vs the default 2%.
+                const currencyCode = decodeCurrency(order.currency);
+                const bps = resolveCashbackBps(config, currencyCode);
+                if (bps <= 0) {
+                    logger.debug(
+                        `OrderCompleted: orderId=${orderId} currency=${currencyCode || 'n/a'} → 0 bps rate, skipping`,
+                    );
+                    return;
+                }
+
                 const amount: bigint = order.amount;
-                const cashback = (amount * BigInt(config.cashbackBps)) / BPS_DENOMINATOR;
+                const cashback = (amount * BigInt(bps)) / BPS_DENOMINATOR;
                 if (cashback <= 0n) {
                     logger.debug(
                         `OrderCompleted: orderId=${orderId} amount=${amount} → 0 cashback after bps, skipping`,
@@ -117,7 +161,7 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
 
                 const orderTypeLabel = orderType === ORDER_TYPE_BUY ? 'BUY' : 'SELL';
                 logger.info(
-                    `OrderCompleted (eligible ${orderTypeLabel}): orderId=${orderId} user=${user} amount=${amount} cashback=${cashback} txHash=${txHash}`,
+                    `OrderCompleted (eligible ${orderTypeLabel}): orderId=${orderId} user=${user} amount=${amount} currency=${currencyCode || 'n/a'} bps=${bps} cashback=${cashback} txHash=${txHash}`,
                 );
 
                 await addCashbackJob(
@@ -137,11 +181,16 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             }
         };
 
+        const overridesSummary = Object.entries(config.cashbackBpsByCurrency)
+            .map(([code, bps]) => `${code}:${bps}`)
+            .join(', ');
+
         diamond.on(ORDER_COMPLETED_EVENT, handler);
         logger.info(
             `OrderCompleted listener attached for diamond: ${config.diamondAddress}` +
                 (programmeOn
-                    ? ` (cashback ${config.cashbackBps} bps → ${config.cashbackIntegratorAddress})`
+                    ? ` (cashback ${config.cashbackBps} bps → ${config.cashbackIntegratorAddress}` +
+                      (overridesSummary ? `; per-currency ${overridesSummary})` : ')')
                     : ' (programme OFF — env unset)'),
         );
 
