@@ -16,7 +16,24 @@ export type ExecutorConfig = {
     // skips in that case so the executor stays useful for deploys that
     // don't want the programme enabled.
     cashbackIntegratorAddress: string;
+    // Default cashback rate applied to every eligible order unless the
+    // order's currency has a per-currency override below.
     cashbackBps: number;
+    // Per-currency cashback overrides keyed by the order's currency code
+    // (the decoded bytes32 symbol, e.g. "ARS"). A currency present here
+    // uses its bps instead of the default cashbackBps. Resolved at order
+    // completion time from the order's `currency` field.
+    cashbackBpsByCurrency: Record<string, number>;
+};
+
+// Built-in per-currency cashback overrides. These ship as defaults so the
+// business rule holds even if the operator forgets to set the env var; the
+// CASHBACK_BPS_BY_CURRENCY env (parsed below) takes precedence per currency.
+// ARS (Argentina) and MEX (Mexico) have tighter spreads where users were
+// farming lotpot credits, so both credit 1% (100 bps) vs the default 2%.
+const DEFAULT_CASHBACK_BPS_BY_CURRENCY: Record<string, number> = {
+    ARS: 100,
+    MEX: 100,
 };
 
 // Backward-compat aliases — all workers/helpers use ExecutorConfig under the hood
@@ -31,6 +48,36 @@ function requireEnv(name: string): string {
     const v = process.env[name];
     if (!v) throw new Error(`Missing env: ${name}`);
     return v;
+}
+
+// Parse the per-currency cashback override env into a {CODE: bps} map and
+// merge it over the built-in defaults (env wins per currency). Format is a
+// comma-separated list of CODE:bps pairs, e.g. "ARS:100,VEN:50". Currency
+// codes are upper-cased to match the decoded bytes32 symbol on the order.
+function parseCashbackBpsByCurrency(raw: string): Record<string, number> {
+    const map: Record<string, number> = { ...DEFAULT_CASHBACK_BPS_BY_CURRENCY };
+    const trimmed = raw.trim();
+    if (!trimmed) return map;
+
+    for (const part of trimmed.split(',')) {
+        const entry = part.trim();
+        if (!entry) continue;
+        const [codeRaw, bpsRaw] = entry.split(':');
+        const code = (codeRaw ?? '').trim().toUpperCase();
+        const bps = Number((bpsRaw ?? '').trim());
+        if (!code) {
+            throw new Error(
+                `CASHBACK_BPS_BY_CURRENCY: missing currency code in entry "${entry}"`,
+            );
+        }
+        if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) {
+            throw new Error(
+                `CASHBACK_BPS_BY_CURRENCY: bps for ${code} must be an integer in [0, 10000], got "${bpsRaw}"`,
+            );
+        }
+        map[code] = bps;
+    }
+    return map;
 }
 
 export function loadExecutorConfig(): ExecutorConfig {
@@ -61,6 +108,9 @@ export function loadExecutorConfig(): ExecutorConfig {
     if (cashbackIntegratorAddress && !/^0x[0-9a-fA-F]{40}$/.test(cashbackIntegratorAddress)) {
         throw new Error('CASHBACK_INTEGRATOR_ADDRESS must be a 0x-prefixed 20-byte address');
     }
+    const cashbackBpsByCurrency = parseCashbackBpsByCurrency(
+        process.env.CASHBACK_BPS_BY_CURRENCY ?? '',
+    );
     return {
         alchemyApiKey,
         diamondAddress,
@@ -73,6 +123,7 @@ export function loadExecutorConfig(): ExecutorConfig {
         assignDelayInSeconds,
         cashbackIntegratorAddress,
         cashbackBps,
+        cashbackBpsByCurrency,
     };
 }
 
