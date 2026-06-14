@@ -8,6 +8,7 @@ export enum WalletRole {
     Assign = 'assign',
     Sweeper = 'sweeper',
     Cashback = 'cashback',
+    Keeper = 'keeper',
 }
 
 const ROLE_LABELS: Record<WalletRole, string> = {
@@ -15,6 +16,7 @@ const ROLE_LABELS: Record<WalletRole, string> = {
     [WalletRole.Assign]: 'Assign',
     [WalletRole.Sweeper]: 'Sweeper',
     [WalletRole.Cashback]: 'Cashback',
+    [WalletRole.Keeper]: 'Keeper',
 };
 
 // When a subwallet drops below minBalance, auto-top-up to this target
@@ -44,6 +46,10 @@ export class WalletManager {
             // CashbackIntegrator.setCreditIssuer(issuer, true). Generated +
             // persisted on first boot if unset, like the others.
             [WalletRole.Cashback]: process.env.CASHBACK_EXECUTOR,
+            // Signs the daily permissionless keeper txs (approveUnstakeBatch +
+            // blacklistInactiveMerchants). Both calls are permissionless, so any
+            // funded wallet works; generated + persisted on first boot if unset.
+            [WalletRole.Keeper]: process.env.KEEPER_EXECUTOR,
         };
 
         for (const role of Object.values(WalletRole) as WalletRole[]) {
@@ -103,6 +109,7 @@ export class WalletManager {
             `Assign:   \`${addr[WalletRole.Assign]}\``,
             `Sweeper:  \`${addr[WalletRole.Sweeper]}\``,
             `Cashback: \`${addr[WalletRole.Cashback]}\`  ← whitelist via integrator.setCreditIssuer`,
+            `Keeper:   \`${addr[WalletRole.Keeper]}\` ← keeper for approveUnstakeBatch + blacklistInactiveMerchants`,
         ].join('\n');
         logger.info(msg);
         await sendDiscordAlert(discordOnSuccessWebhookUrl, msg);

@@ -9,6 +9,7 @@ import { startAssignWorker } from './queue/workers/assignWorker';
 import { startOrderSweeperWorker } from './queue/workers/orderSweeperWorker';
 import { startOrderScannerWorker } from './queue/workers/orderScannerWorker';
 import { startCashbackWorker } from './queue/workers/cashbackWorker';
+import { startDailyKeeperWorker } from './queue/workers/dailyKeeperWorker';
 import { logger } from './helpers/logger';
 import { CONTRACT_AUTOMATION_REGISTRY } from './helpers/registry';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
@@ -55,7 +56,7 @@ async function start() {
 
     // Seed pending orders to order sweeper (skip in dry-run — no point scanning 10k blocks)
     if (!config.dryRun) {
-        await syncOrderIds(config, 10000);
+        await syncOrderIds(config, 2500);
         logger.info('initial syncOrderIds done');
     } else {
         logger.info('dry-run: skipping initial syncOrderIds');
@@ -145,6 +146,7 @@ async function start() {
     startOrderSweeperWorker(config, walletManager);
     startOrderScannerWorker(config);
     startCashbackWorker(config, walletManager); // no-op when programme env unset
+    startDailyKeeperWorker(config, walletManager);
     logger.info('workers started');
 }
 
