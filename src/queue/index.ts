@@ -11,6 +11,8 @@ export const ORDER_SWEEPER_QUEUE_NAME = 'order-sweeper-calls';
 export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 // B2B cashback programme — see queue/workers/cashbackWorker.ts.
 export const CASHBACK_QUEUE_NAME = 'cashback-calls';
+// Daily permissionless keeper — see queue/workers/dailyKeeperWorker.ts.
+export const DAILY_KEEPER_QUEUE_NAME = 'daily-keeper-calls';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
 export const connection = new IORedis(REDIS_URL, {
@@ -27,6 +29,7 @@ export let toggleScheduleQueue: Queue<ContractJobData>;
 export let orderSweeperQueue: Queue<any>;
 export let orderScannerQueue: Queue<any>;
 export let cashbackQueue: Queue<ContractJobData>;
+export let dailyKeeperQueue: Queue<any>;
 
 export function initToggleQueue(_config?: ToggleConfig) {
     if (!toggleQueue) {
@@ -111,6 +114,24 @@ export function initCashbackQueue() {
         logger.info(`queue: ${CASHBACK_QUEUE_NAME} initialised`);
     }
     return cashbackQueue;
+}
+
+export function initDailyKeeperQueue() {
+    if (!dailyKeeperQueue) {
+        dailyKeeperQueue = new Queue<any>(DAILY_KEEPER_QUEUE_NAME, {
+            connection,
+            defaultJobOptions: {
+                removeOnComplete: true,
+                removeOnFail: { count: 100 },
+                // The job is fully idempotent (re-validates everything on-chain),
+                // but a single daily run is cheap to retry on transient RPC/subgraph hiccups.
+                attempts: 2,
+                backoff: { type: 'exponential', delay: 10000 },
+            },
+        });
+        logger.info(`queue: ${DAILY_KEEPER_QUEUE_NAME} initialised`);
+    }
+    return dailyKeeperQueue;
 }
 
 export function initOrderScannerQueue() {
