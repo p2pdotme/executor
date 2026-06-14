@@ -9,6 +9,9 @@ export type ExecutorConfig = {
     minBaseBalanceEth: number;
     dryRun: boolean;
     assignDelayInSeconds: number;
+    // Goldsky subgraph endpoint used by the daily keeper to enumerate
+    // unstake-requested + inactive merchants. Defaults to the prod endpoint.
+    subgraphUrl: string;
     // B2B cashback programme — credits a bps cut of every completed non-B2B
     // BUY or SELL back to the order's user (buyer for BUY, seller for SELL)
     // via integrator.issueCredit(). The programme is OFF when integrator
@@ -111,6 +114,7 @@ export function loadExecutorConfig(): ExecutorConfig {
     const cashbackBpsByCurrency = parseCashbackBpsByCurrency(
         process.env.CASHBACK_BPS_BY_CURRENCY ?? '',
     );
+    const subgraphUrl = (process.env.SUBGRAPH_URL ?? '').trim();
     return {
         alchemyApiKey,
         diamondAddress,
@@ -121,6 +125,7 @@ export function loadExecutorConfig(): ExecutorConfig {
         minBaseBalanceEth,
         dryRun,
         assignDelayInSeconds,
+        subgraphUrl,
         cashbackIntegratorAddress,
         cashbackBps,
         cashbackBpsByCurrency,

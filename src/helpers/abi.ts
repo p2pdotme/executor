@@ -692,6 +692,58 @@ export const DIAMOND_FUNCTIONS = [
         "stateMutability": "view",
         "type": "function"
     },
+    // ── Daily keeper (see queue/workers/dailyKeeperWorker.ts) ──────────────
+    // REVERT-ALL: one ineligible entry reverts the whole tx → pre-validate strictly.
+    {
+        "inputs": [{ "internalType": "address[]", "name": "merchants", "type": "address[]" }],
+        "name": "approveUnstakeBatch",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    // Skip-on-fail: invalid entries are silently skipped on-chain → superset safe.
+    {
+        "inputs": [{ "internalType": "address[]", "name": "merchants", "type": "address[]" }],
+        "name": "blacklistInactiveMerchants",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [{ "internalType": "address", "name": "_merchant", "type": "address" }],
+        "name": "getUnstakeRequested",
+        "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{ "internalType": "address", "name": "_merchant", "type": "address" }],
+        "name": "getUnstakeCooldownEndTime",
+        "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{ "internalType": "address", "name": "_merchant", "type": "address" }],
+        "name": "hasOngoingOrder",
+        "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{ "internalType": "address", "name": "_merchant", "type": "address" }],
+        "name": "isBlacklisted",
+        "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{ "internalType": "address", "name": "_merchant", "type": "address" }],
+        "name": "getMerchantReactivatedAt",
+        "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+        "stateMutability": "view",
+        "type": "function"
+    },
 ]
 
 export const DIAMOND_ABI = [...DIAMOND_EVENTS, ...DIAMOND_FUNCTIONS] as const;
