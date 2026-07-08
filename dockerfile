@@ -1,40 +1,33 @@
-# build stage
-FROM node:20-alpine AS build
+# ---- build stage ----
+FROM oven/bun:1-alpine AS build
 WORKDIR /app
 
-# copy for install + build
-COPY package.json package-lock.json tsconfig.json ./
+# install all deps from the lockfile (cached layer)
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+
+# compile TypeScript -> dist via tsc
+COPY tsconfig.json ./
 COPY src ./src
+RUN bun run build
 
-# install deps and build
-RUN npm ci --no-audit --no-fund
-RUN npm run build
-
-# runtime stage
-FROM node:20-alpine AS runtime
+# ---- runtime stage ----
+FROM oven/bun:1-alpine AS runtime
 WORKDIR /app
+ENV NODE_ENV=production
 
-# install tini + CA certs for HTTPS
+# tini as PID 1 (clean signal handling) + CA certs for HTTPS (RPC / subgraph / webhooks)
 RUN apk add --no-cache tini ca-certificates
-
-# tini as PID 1
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# copy built output + production metadata
+# production deps only
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
+
+# built output
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/package-lock.json ./package-lock.json
 
-# install only production deps
-ENV NODE_ENV=production
-RUN npm ci --omit=dev --no-audit --no-fund
-
-# ensure runtime files owned by node
-RUN chown -R node:node /app
-
+# Railway injects PORT at runtime; app falls back to 8000 (see src/index.ts)
 EXPOSE 8000
-
-# run as non-root user
-USER node
-
-CMD ["node", "--enable-source-maps", "dist/index.js"]
+USER bun
+CMD ["bun", "dist/index.js"]
