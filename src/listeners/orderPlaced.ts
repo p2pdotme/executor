@@ -87,9 +87,31 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
             return;
         }
 
+        // Heartbeat: onclose/onerror miss *silent* stalls — a socket that stays
+        // "open" but stops delivering logs. Every 30s check readyState and issue a
+        // real RPC call (block number) with a 10s cap; either failing triggers a
+        // reconnect. Without this the executor can go dark on a dead WS with no
+        // close event and stop assigning merchants until a manual restart.
+        const heartbeatInterval = setInterval(async () => {
+            try {
+                if (ws.readyState !== 1) { // 1 = OPEN
+                    scheduleReconnect(`ws not OPEN (readyState=${ws.readyState})`);
+                    return;
+                }
+                const blockPromise = wsProvider.getBlockNumber();
+                const timeout = new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('heartbeat timeout')), 10_000),
+                );
+                await Promise.race([blockPromise, timeout]);
+            } catch (err: any) {
+                scheduleReconnect(`heartbeat failed: ${String(err?.message ?? err)}`);
+            }
+        }, 30_000);
+
         const scheduleReconnect = (reason: string) => {
             if (reconnectScheduled) return;
             reconnectScheduled = true;
+            clearInterval(heartbeatInterval);
 
             const msg = `⚠️ OrderPlaced WS issue: ${reason}. Reconnecting in 5s...`;
             logger.error(msg);
