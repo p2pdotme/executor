@@ -14,7 +14,7 @@ const LOCK_DURATION_MS = 30 * 60_000; // 30 min
 const SECS_PER_DAY = 86_400;
 const MERCHANT_INACTIVITY_PERIOD = 30 * SECS_PER_DAY; // mirrors the on-chain const
 // On-chain currency codes (NOTE: "MEX"/"VEN", not MXN/VES).
-const CURRENCIES = ['INR', 'BRL', 'ARS', 'VEN', 'IDR', 'NGN', 'COP', 'MEX', 'USD', 'EUR', 'ECU'];
+const CURRENCIES = ['INR', 'BRL', 'ARS', 'VEN', 'IDR', 'NGN', 'COP', 'MEX', 'USD', 'EUR', 'ECU', 'PEN'];
 const PAGE = 500; // subgraph page size
 const TX_CHUNK = 50; // merchants per on-chain tx
 const READ_CHUNK = 20; // concurrent view-call / subgraph fan-out

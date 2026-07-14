@@ -10,6 +10,7 @@ export const currencyMap: Record<string, string> = {
     [ethers.encodeBytes32String("MEX")]: "Mex",
     [ethers.encodeBytes32String("VEN")]: "Ven",
     [ethers.encodeBytes32String("ECU")]: "Ecu",
+    [ethers.encodeBytes32String("PEN")]: "Pen",
 };
 
 const MERCHANT_ASSIGNED_EVENT = 'MerchantAssignedNewOrder';
