@@ -9,6 +9,7 @@ export enum WalletRole {
     Sweeper = 'sweeper',
     Cashback = 'cashback',
     Keeper = 'keeper',
+    Settle = 'settle',
 }
 
 const ROLE_LABELS: Record<WalletRole, string> = {
@@ -17,6 +18,7 @@ const ROLE_LABELS: Record<WalletRole, string> = {
     [WalletRole.Sweeper]: 'Sweeper',
     [WalletRole.Cashback]: 'Cashback',
     [WalletRole.Keeper]: 'Keeper',
+    [WalletRole.Settle]: 'Settle',
 };
 
 // When a subwallet drops below minBalance, auto-top-up to this target
@@ -50,6 +52,13 @@ export class WalletManager {
             // blacklistInactiveMerchants). Both calls are permissionless, so any
             // funded wallet works; generated + persisted on first boot if unset.
             [WalletRole.Keeper]: process.env.KEEPER_EXECUTOR,
+            // Signs insurance settleClaim txs once a claim's payout delay has
+            // elapsed. settleClaim is NOT permissionless — this address must be
+            // whitelisted on the Insurance Diamond as a currency approver
+            // (setCurrencyApprover) or granted super-admin, else every settle
+            // reverts NotAuthorized in presim. Generated + persisted on first
+            // boot if unset, like the others.
+            [WalletRole.Settle]: process.env.SETTLE_EXECUTOR,
         };
 
         for (const role of Object.values(WalletRole) as WalletRole[]) {
@@ -110,6 +119,7 @@ export class WalletManager {
             `Sweeper:  \`${addr[WalletRole.Sweeper]}\``,
             `Cashback: \`${addr[WalletRole.Cashback]}\`  ← whitelist via integrator.setCreditIssuer`,
             `Keeper:   \`${addr[WalletRole.Keeper]}\` ← keeper for approveUnstakeBatch + blacklistInactiveMerchants`,
+            `Settle:   \`${addr[WalletRole.Settle]}\` ← whitelist via insurance.setCurrencyApprover (settleClaim)`,
         ].join('\n');
         logger.info(msg);
         await sendDiscordAlert(discordOnSuccessWebhookUrl, msg);

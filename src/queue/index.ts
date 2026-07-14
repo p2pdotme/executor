@@ -1,7 +1,7 @@
 import { Queue, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { AssignConfig, ToggleConfig } from '../helpers/config';
-import { ContractJobData } from './types';
+import { ContractJobData, SettleClaimJobData } from './types';
 import { logger } from '../helpers/logger';
 
 export const TOGGLE_QUEUE_NAME = 'toggle-calls';
@@ -13,6 +13,12 @@ export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 export const CASHBACK_QUEUE_NAME = 'cashback-calls';
 // Daily permissionless keeper — see queue/workers/dailyKeeperWorker.ts.
 export const DAILY_KEEPER_QUEUE_NAME = 'daily-keeper-calls';
+// Insurance settlement keeper — one settleClaim tx per job, serialized
+// (concurrency 1) on a dedicated Settle wallet. See settleClaimWorker.ts.
+export const SETTLE_CLAIM_QUEUE_NAME = 'settle-claim-calls';
+// Subgraph reconciliation tick that enqueues overdue/missed claims into the
+// settle queue. See settleClaimScannerWorker.ts.
+export const SETTLE_CLAIM_SCANNER_QUEUE_NAME = 'settle-claim-scanner-calls';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
 export const connection = new IORedis(REDIS_URL, {
@@ -30,6 +36,8 @@ export let orderSweeperQueue: Queue<any>;
 export let orderScannerQueue: Queue<any>;
 export let cashbackQueue: Queue<ContractJobData>;
 export let dailyKeeperQueue: Queue<any>;
+export let settleClaimQueue: Queue<SettleClaimJobData>;
+export let settleClaimScannerQueue: Queue<any>;
 
 export function initToggleQueue(_config?: ToggleConfig) {
     if (!toggleQueue) {
@@ -134,6 +142,42 @@ export function initDailyKeeperQueue() {
     return dailyKeeperQueue;
 }
 
+export function initSettleClaimQueue() {
+    if (!settleClaimQueue) {
+        settleClaimQueue = new Queue<SettleClaimJobData>(SETTLE_CLAIM_QUEUE_NAME, {
+            connection,
+            defaultJobOptions: {
+                removeOnComplete: true,
+                removeOnFail: { count: 100 },
+                // settleClaim is idempotent (presim re-checks status/delay/auth on
+                // every run), so transient RPC/nonce hiccups are the only realistic
+                // failure worth retrying. A permanent revert is caught in presim and
+                // returns false without throwing — no retry, no wasted gas.
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 5000 },
+            },
+        });
+        logger.info(`queue: ${SETTLE_CLAIM_QUEUE_NAME} initialised`);
+    }
+    return settleClaimQueue;
+}
+
+export function initSettleClaimScannerQueue() {
+    if (!settleClaimScannerQueue) {
+        settleClaimScannerQueue = new Queue<any>(SETTLE_CLAIM_SCANNER_QUEUE_NAME, {
+            connection,
+            defaultJobOptions: {
+                removeOnComplete: true,
+                removeOnFail: { count: 100 },
+                attempts: 2,
+                backoff: { type: 'exponential', delay: 10000 },
+            },
+        });
+        logger.info(`queue: ${SETTLE_CLAIM_SCANNER_QUEUE_NAME} initialised`);
+    }
+    return settleClaimScannerQueue;
+}
+
 export function initOrderScannerQueue() {
     if (!orderScannerQueue) {
         orderScannerQueue = new Queue<any>(ORDER_SCANNER_QUEUE_NAME, {
@@ -204,6 +248,41 @@ export async function addAssignJob(
     } else {
         logger.info(
             `queue(${ASSIGN_QUEUE_NAME}): added job name= ${name} jobId= ${job.id} delayMs= ${delay}`,
+        );
+    }
+
+    return job;
+}
+
+export async function addSettleClaimJob(
+    data: SettleClaimJobData,
+    opts?: { delayMs?: number; jobId?: string },
+) {
+    const queue = initSettleClaimQueue();
+    const delay = opts?.delayMs ?? 0;
+
+    const job: Job<SettleClaimJobData> = await queue.add(
+        'SettleClaim',
+        data,
+        {
+            delay,
+            // jobId pins idempotency to the claimId — see claimApproved listener
+            // and the reconciliation scanner. A ClaimApproved replay (WS
+            // reconnect) or an overlap between the delayed WS job and the scanner
+            // returns the existing job instead of enqueueing a duplicate, so
+            // settleClaim is at-most-once-in-flight per claim.
+            jobId: opts?.jobId,
+        },
+    );
+
+    const state = await job.getState();
+    if (state !== 'delayed' && state !== 'waiting') {
+        logger.info(
+            `queue(${SETTLE_CLAIM_QUEUE_NAME}): job DEDUPED — jobId= ${job.id} already in state= ${state} (OK — settle fires once per claim)`,
+        );
+    } else {
+        logger.info(
+            `queue(${SETTLE_CLAIM_QUEUE_NAME}): added job jobId= ${job.id} claimId= ${data.claimId} delayMs= ${delay}`,
         );
     }
 
