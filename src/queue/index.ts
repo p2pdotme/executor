@@ -13,7 +13,7 @@ export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 export const CASHBACK_QUEUE_NAME = 'cashback-calls';
 // Daily permissionless keeper — see queue/workers/dailyKeeperWorker.ts.
 export const DAILY_KEEPER_QUEUE_NAME = 'daily-keeper-calls';
-// Insurance settlement keeper — one settleClaimPermissionless tx per job,
+// Insurance settlement keeper — one (permissionless) settleClaim tx per job,
 // serialized (concurrency 1) on the shared Keeper wallet. See settleClaimWorker.ts.
 export const SETTLE_CLAIM_QUEUE_NAME = 'settle-claim-calls';
 // Subgraph reconciliation tick that enqueues overdue/missed claims into the

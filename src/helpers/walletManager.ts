@@ -47,10 +47,10 @@ export class WalletManager {
             // persisted on first boot if unset, like the others.
             [WalletRole.Cashback]: process.env.CASHBACK_EXECUTOR,
             // Signs the daily keeper txs (approveUnstakeBatch +
-            // blacklistInactiveMerchants) AND the insurance
-            // settleClaimPermissionless txs. All three are permissionless, so
-            // any funded wallet works — no on-chain whitelist needed. Generated
-            // + persisted on first boot if unset, like the others.
+            // blacklistInactiveMerchants) AND the insurance settleClaim txs. All
+            // three are permissionless, so any funded wallet works — no on-chain
+            // whitelist needed. Generated + persisted on first boot if unset,
+            // like the others.
             [WalletRole.Keeper]: process.env.KEEPER_EXECUTOR,
         };
 
@@ -111,7 +111,7 @@ export class WalletManager {
             `Assign:   \`${addr[WalletRole.Assign]}\``,
             `Sweeper:  \`${addr[WalletRole.Sweeper]}\``,
             `Cashback: \`${addr[WalletRole.Cashback]}\`  ← whitelist via integrator.setCreditIssuer`,
-            `Keeper:   \`${addr[WalletRole.Keeper]}\` ← approveUnstakeBatch + blacklistInactiveMerchants + settleClaimPermissionless`,
+            `Keeper:   \`${addr[WalletRole.Keeper]}\` ← approveUnstakeBatch + blacklistInactiveMerchants + settleClaim`,
         ].join('\n');
         logger.info(msg);
         await sendDiscordAlert(discordOnSuccessWebhookUrl, msg);

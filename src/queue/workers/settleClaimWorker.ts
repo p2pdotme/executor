@@ -17,7 +17,7 @@ const LOCK_DURATION_MS = 180_000; // 3 min
 // claims strictly ONE BY ONE. Nonce safety: getSigner returns the single shared
 // NonceManager for the Keeper wallet, which hands out sequential nonces
 // atomically — so even if a settle overlaps the once-a-day keeper run, the two
-// never collide on a nonce. Calls settleClaimPermissionless, so the Keeper
+// never collide on a nonce. Calls the permissionless settleClaim, so the Keeper
 // wallet needs NO on-chain whitelist — just ETH for gas.
 // safeSend runs a presim staticCall first, so a claim that is not-yet-due or
 // already settled reverts in simulation at ZERO gas and returns false — no
@@ -52,7 +52,7 @@ export function startSettleClaimWorker(config: ExecutorConfig, walletManager: Wa
                 // retry, no wasted gas.
                 const ok = await safeSend(
                     insurance,
-                    'settleClaimPermissionless',
+                    'settleClaim',
                     [claimId],
                     config,
                     { claimId },
