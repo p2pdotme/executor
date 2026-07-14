@@ -17,12 +17,11 @@ const LOCK_DURATION_MS = 180_000; // 3 min
 // claims strictly ONE BY ONE. Nonce safety: getSigner returns the single shared
 // NonceManager for the Keeper wallet, which hands out sequential nonces
 // atomically — so even if a settle overlaps the once-a-day keeper run, the two
-// never collide on a nonce. settleClaim is NOT permissionless: the Keeper wallet
-// must be whitelisted via insurance.setCurrencyApprover (or super-admin), else
-// every settle reverts NotAuthorized in presim (0 gas).
-// safeSend runs a presim staticCall first, so a claim that is not-yet-due,
-// already settled, or unauthorised reverts in simulation at ZERO gas and returns
-// false — no wasted gas, no retry loop.
+// never collide on a nonce. Calls settleClaimPermissionless, so the Keeper
+// wallet needs NO on-chain whitelist — just ETH for gas.
+// safeSend runs a presim staticCall first, so a claim that is not-yet-due or
+// already settled reverts in simulation at ZERO gas and returns false — no
+// wasted gas, no retry loop.
 export function startSettleClaimWorker(config: ExecutorConfig, walletManager: WalletManager) {
     if (!config.insuranceDiamondAddress) {
         logger.info('settle-claim-worker: INSURANCE_DIAMOND_ADDRESS unset — insurance settlement keeper disabled');
@@ -48,12 +47,12 @@ export function startSettleClaimWorker(config: ExecutorConfig, walletManager: Wa
             logger.info(`▶️ settle-claim-worker: job start claimId= ${claimId} jobId= ${job.id}`);
 
             try {
-                // presim on (default): stale / not-yet-due / unauthorised claims
-                // revert in simulation at 0 gas → safeSend returns false, we log,
-                // no retry, no wasted gas.
+                // presim on (default): stale / not-yet-due claims revert in
+                // simulation at 0 gas → safeSend returns false, we log, no
+                // retry, no wasted gas.
                 const ok = await safeSend(
                     insurance,
-                    'settleClaim',
+                    'settleClaimPermissionless',
                     [claimId],
                     config,
                     { claimId },

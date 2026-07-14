@@ -1,11 +1,12 @@
 // Minimal ABI for the Insurance Diamond — only the pieces the settle keeper
-// needs: the ClaimApproved event (WS trigger) and the settleClaim write.
+// needs: the ClaimApproved event (WS trigger) and the settleClaimPermissionless
+// write.
 //
-// settleClaim is NOT permissionless: on-chain it requires msg.sender to be the
-// claimant / beneficiary / a currency approver / a super admin / a circle
-// delegate. The Keeper wallet must therefore be whitelisted as a currency
-// approver (setCurrencyApprover) or granted super-admin rights, or every settle
-// staticCall reverts NotAuthorized (caught in presim at 0 gas).
+// settleClaimPermissionless can be called by anyone once a claim is APPROVED and
+// its payout delay has elapsed (it drops the caller allow-list that gates the
+// authorised {settleClaim}). So the Keeper wallet needs NO on-chain whitelist —
+// just ETH for gas. Settlement is deterministic: funds always go to the claim's
+// pre-recorded beneficiary.
 export const INSURANCE_EVENTS = [
     {
         anonymous: false,
@@ -21,12 +22,13 @@ export const INSURANCE_EVENTS = [
 ] as const;
 
 export const INSURANCE_FUNCTIONS = [
-    // Reverts InsuranceClaimNotFound / InsuranceInvalidClaimStatus /
-    // InsurancePayoutDelayNotMet / NotAuthorized — all caught in presim (0 gas)
-    // so a stale or not-yet-due claimId never wastes gas.
+    // Permissionless. Reverts InsuranceClaimNotFound / InsuranceInvalidClaimStatus /
+    // InsurancePayoutDelayNotMet / InsuranceInsufficientFunds — all caught in
+    // presim (0 gas) so a stale, not-yet-due, or underfunded claimId never
+    // wastes gas.
     {
         inputs: [{ internalType: 'uint256', name: 'claimId', type: 'uint256' }],
-        name: 'settleClaim',
+        name: 'settleClaimPermissionless',
         outputs: [],
         stateMutability: 'nonpayable',
         type: 'function',
