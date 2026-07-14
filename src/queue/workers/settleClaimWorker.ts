@@ -12,20 +12,24 @@ import { WalletManager, WalletRole } from '../../helpers/walletManager';
 const LOCK_DURATION_MS = 180_000; // 3 min
 
 // Settles one approved insurance claim per job once its payout delay has
-// elapsed. concurrency:1 on a DEDICATED Settle wallet means:
-//   - claims are settled strictly ONE BY ONE (serialized), and
-//   - the Settle wallet's nonce sequence is never touched by any other worker,
-//     so there is no cross-worker nonce contention.
+// elapsed, using the shared Keeper wallet (same one that signs the daily
+// approveUnstakeBatch + blacklistInactiveMerchants). concurrency:1 settles
+// claims strictly ONE BY ONE. Nonce safety: getSigner returns the single shared
+// NonceManager for the Keeper wallet, which hands out sequential nonces
+// atomically — so even if a settle overlaps the once-a-day keeper run, the two
+// never collide on a nonce. settleClaim is NOT permissionless: the Keeper wallet
+// must be whitelisted via insurance.setCurrencyApprover (or super-admin), else
+// every settle reverts NotAuthorized in presim (0 gas).
 // safeSend runs a presim staticCall first, so a claim that is not-yet-due,
-// already settled, or one this wallet isn't authorised to settle reverts in
-// simulation at ZERO gas and returns false — no wasted gas, no retry loop.
+// already settled, or unauthorised reverts in simulation at ZERO gas and returns
+// false — no wasted gas, no retry loop.
 export function startSettleClaimWorker(config: ExecutorConfig, walletManager: WalletManager) {
     if (!config.insuranceDiamondAddress) {
         logger.info('settle-claim-worker: INSURANCE_DIAMOND_ADDRESS unset — insurance settlement keeper disabled');
         return;
     }
 
-    const signer = walletManager.getSigner(WalletRole.Settle);
+    const signer = walletManager.getSigner(WalletRole.Keeper);
     const insurance = new Contract(config.insuranceDiamondAddress, INSURANCE_ABI, signer);
 
     initSettleClaimQueue();

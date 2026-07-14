@@ -3,9 +3,9 @@
 //
 // settleClaim is NOT permissionless: on-chain it requires msg.sender to be the
 // claimant / beneficiary / a currency approver / a super admin / a circle
-// delegate. The Settle keeper wallet must therefore be whitelisted as a
-// currency approver (setCurrencyApprover) or granted super-admin rights, or
-// every settle staticCall reverts NotAuthorized (caught in presim at 0 gas).
+// delegate. The Keeper wallet must therefore be whitelisted as a currency
+// approver (setCurrencyApprover) or granted super-admin rights, or every settle
+// staticCall reverts NotAuthorized (caught in presim at 0 gas).
 export const INSURANCE_EVENTS = [
     {
         anonymous: false,
