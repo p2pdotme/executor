@@ -10,10 +10,29 @@ import { sendDiscordAlert } from '../helpers/discord';
 
 const ORDER_PLACED_EVENT = 'OrderPlaced';
 
+// Reconnect backoff + alert throttling. A flapping WS (e.g. code=1011) used to
+// reconnect on a flat 5s and fire a Discord ping every cycle. We now back off
+// exponentially (5s→60s), only resetting to the floor once the heartbeat proves
+// the socket has stayed up STABLE_UPTIME_MS, and collapse alerts to one "down"
+// ping per outage (+ a periodic reminder) plus one "recovered" status.
+const MIN_BACKOFF_MS = 5_000;
+const MAX_BACKOFF_MS = 60_000;
+const STABLE_UPTIME_MS = 120_000;
+const OUTAGE_REMINDER_EVERY = 12;
+
 export async function attachOrderPlacedListener(config: ToggleConfig & AssignConfig) {
     const ASSIGN_DELAY_MS = config.assignDelayInSeconds * 1000 + 1_000; // 1s buffer
 
     let reconnectScheduled = false;
+
+    // Reconnect/alert state (persists across reconnects). backoffMs grows on
+    // each flap and is reset by the heartbeat once uptime clears the stability
+    // window; connectedAt marks the current connection's start; outageAlerted
+    // collapses repeat down-pings into one per outage.
+    let backoffMs = MIN_BACKOFF_MS;
+    let connectedAt = 0;
+    let consecutiveFailures = 0;
+    let outageAlerted = false;
 
     const setup = () => {
         reconnectScheduled = false;
@@ -71,10 +90,17 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
         diamond.on(ORDER_PLACED_EVENT, handler);
         logger.info(`OrderPlaced listener attached for diamond: ${config.diamondAddress}`);
 
-        void sendDiscordAlert(
-            config.discordOnSuccessWebhookUrl,
-            '✅ WS connected in Executor: OrderPlaced listener attached',
-        ).catch((e: any) => logger.warn(`OrderPlaced: Discord alert failed: ${e?.message}`));
+        // connectedAt is 0 only before the very first connect — how we fire the
+        // "connected" ping just once rather than on every reconnect flap.
+        const wasFirstConnect = connectedAt === 0;
+        connectedAt = Date.now();
+
+        if (wasFirstConnect) {
+            void sendDiscordAlert(
+                config.discordOnSuccessWebhookUrl,
+                '✅ WS connected in Executor: OrderPlaced listener attached',
+            ).catch((e: any) => logger.warn(`OrderPlaced: Discord alert failed: ${e?.message}`));
+        }
 
         const ws: any =
             (wsProvider as any)._websocket ??
@@ -103,6 +129,23 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
                     setTimeout(() => reject(new Error('heartbeat timeout')), 10_000),
                 );
                 await Promise.race([blockPromise, timeout]);
+
+                // Healthy tick: once the socket has been up past the stability
+                // window, treat any prior outage as over — reset the backoff to
+                // the floor and post a single "recovered" status.
+                if (Date.now() - connectedAt >= STABLE_UPTIME_MS) {
+                    backoffMs = MIN_BACKOFF_MS;
+                    if (outageAlerted) {
+                        void sendDiscordAlert(
+                            config.discordOnSuccessWebhookUrl,
+                            `✅ OrderPlaced WS recovered — stable for ${Math.round(
+                                (Date.now() - connectedAt) / 1000,
+                            )}s after ${consecutiveFailures} reconnect attempt(s)`,
+                        ).catch(() => {});
+                    }
+                    outageAlerted = false;
+                    consecutiveFailures = 0;
+                }
             } catch (err: any) {
                 scheduleReconnect(`heartbeat failed: ${String(err?.message ?? err)}`);
             }
@@ -113,10 +156,34 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
             reconnectScheduled = true;
             clearInterval(heartbeatInterval);
 
-            const msg = `⚠️ OrderPlaced WS issue: ${reason}. Reconnecting in 5s...`;
+            consecutiveFailures += 1;
+
+            // A socket that stayed up past the stability window starts over at
+            // the floor, so an isolated flap after a long-healthy connection
+            // doesn't inherit a stale escalated delay.
+            const wasStable =
+                connectedAt > 0 && Date.now() - connectedAt >= STABLE_UPTIME_MS;
+            if (wasStable) backoffMs = MIN_BACKOFF_MS;
+            const waitMs = backoffMs;
+            backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+
+            const msg = `⚠️ OrderPlaced WS issue: ${reason}. Reconnecting in ${Math.round(
+                waitMs / 1000,
+            )}s (attempt ${consecutiveFailures})...`;
             logger.error(msg);
 
-            void sendDiscordAlert(config.discordOnFailWebhookUrl, msg).catch(() => {});
+            // Collapse alert noise: one ping when an outage starts, then a
+            // reminder every OUTAGE_REMINDER_EVERY attempts while it persists.
+            // The "recovered" status is posted by the heartbeat.
+            if (!outageAlerted) {
+                outageAlerted = true;
+                void sendDiscordAlert(config.discordOnFailWebhookUrl, msg).catch(() => {});
+            } else if (consecutiveFailures % OUTAGE_REMINDER_EVERY === 0) {
+                void sendDiscordAlert(
+                    config.discordOnFailWebhookUrl,
+                    `⏳ OrderPlaced WS still reconnecting after ${consecutiveFailures} attempts (last: ${reason})`,
+                ).catch(() => {});
+            }
 
             diamond.removeAllListeners(ORDER_PLACED_EVENT);
 
@@ -135,7 +202,7 @@ export async function attachOrderPlacedListener(config: ToggleConfig & AssignCon
             setTimeout(() => {
                 logger.info('OrderPlaced: reconnecting WS listener');
                 setup();
-            }, 5_000);
+            }, waitMs);
         };
 
         ws.onclose = (evt: any) => {
