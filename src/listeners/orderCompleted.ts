@@ -23,6 +23,18 @@ const BPS_DENOMINATOR = 10_000n;
 const RECONCILE_CHUNK_BLOCKS = 2_500;
 const MAX_BACKFILL_BLOCKS = 5_000;
 
+// Reconnect backoff + alert throttling. A flapping WS (e.g. code=1011) used to
+// reconnect on a flat 5s and fire a Discord ping on every cycle — ~8 alerts/min
+// of pure noise. We now back off exponentially (5s→60s) and only reset to the
+// floor after the socket has stayed up STABLE_UPTIME_MS, so a single flap can't
+// keep resetting the backoff. Alerts are collapsed to one "down" ping per
+// outage plus a periodic reminder, then one "recovered" status.
+const MIN_BACKOFF_MS = 5_000;
+const MAX_BACKOFF_MS = 60_000;
+const STABLE_UPTIME_MS = 120_000;
+// Emit a reminder every Nth failed attempt while an outage persists.
+const OUTAGE_REMINDER_EVERY = 12;
+
 // Decode the order's bytes32 currency into its symbol (e.g. "ARS"). Returns
 // '' when the field is empty/unset or not a valid bytes32 string so callers
 // can safely fall back to the default cashback rate.
@@ -87,6 +99,15 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
     )!.topicHash;
     let lastProcessedBlock = 0;
     let isFirstConnect = true;
+
+    // Reconnect/alert state (persists across reconnects). backoffMs grows on
+    // each flap and only resets once the socket proves stable; connectedAt marks
+    // the current connection's start so we can measure uptime without a
+    // heartbeat. outageAlerted collapses repeat down-pings into one per outage.
+    let backoffMs = MIN_BACKOFF_MS;
+    let connectedAt = 0;
+    let consecutiveFailures = 0;
+    let outageAlerted = false;
 
     // Programme is on when an integrator is configured AND at least one
     // positive rate exists — either the default bps or a per-currency
@@ -314,6 +335,14 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             await reconcileGap();
         }
 
+        // Mark this connection's start so scheduleReconnect / the stability
+        // timer can measure uptime. connectedAt is 0 only before the very first
+        // connect, which is how we fire the "connected" ping just once (not on
+        // every reconnect during a flap).
+        const wasFirstConnect = connectedAt === 0;
+        connectedAt = Date.now();
+        const myConnectedAt = connectedAt;
+
         logger.info(
             `OrderCompleted listener attached for diamond: ${config.diamondAddress}` +
                 (programmeOn
@@ -322,12 +351,35 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                     : ' (programme OFF — env unset)'),
         );
 
-        void sendDiscordAlert(
-            config.discordOnSuccessWebhookUrl,
-            programmeOn
-                ? `✅ WS connected in Executor: OrderCompleted listener attached (cashback ${config.cashbackBps} bps)`
-                : '✅ WS connected in Executor: OrderCompleted listener attached (cashback programme OFF)',
-        ).catch((e: any) => logger.warn(`OrderCompleted: Discord alert failed: ${e?.message}`));
+        if (wasFirstConnect) {
+            void sendDiscordAlert(
+                config.discordOnSuccessWebhookUrl,
+                programmeOn
+                    ? `✅ WS connected in Executor: OrderCompleted listener attached (cashback ${config.cashbackBps} bps)`
+                    : '✅ WS connected in Executor: OrderCompleted listener attached (cashback programme OFF)',
+            ).catch((e: any) => logger.warn(`OrderCompleted: Discord alert failed: ${e?.message}`));
+        }
+
+        // One-shot stability check (not a recurring heartbeat): if this same
+        // connection is still live after STABLE_UPTIME_MS, treat the outage as
+        // over — reset the backoff to the floor and, if we'd alerted a WS
+        // issue, post a single "recovered" status. Invalidated by connectedAt
+        // changing on any intervening reconnect, so a flapping socket never
+        // trips it.
+        setTimeout(() => {
+            if (connectedAt !== myConnectedAt) return;
+            if (outageAlerted) {
+                void sendDiscordAlert(
+                    config.discordOnSuccessWebhookUrl,
+                    `✅ OrderCompleted WS recovered — stable for ${Math.round(
+                        STABLE_UPTIME_MS / 1000,
+                    )}s after ${consecutiveFailures} reconnect attempt(s)`,
+                ).catch(() => {});
+            }
+            backoffMs = MIN_BACKOFF_MS;
+            consecutiveFailures = 0;
+            outageAlerted = false;
+        }, STABLE_UPTIME_MS);
 
         const ws: any =
             (wsProvider as any)._websocket ??
@@ -344,10 +396,35 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             if (reconnectScheduled) return;
             reconnectScheduled = true;
 
-            const msg = `⚠️ OrderCompleted WS issue: ${reason}. Reconnecting in 5s...`;
+            consecutiveFailures += 1;
+
+            // A socket that stayed up past the stability window is treated as a
+            // fresh start: reset the backoff to the floor before computing this
+            // wait, so an isolated flap after a long-healthy connection doesn't
+            // inherit a stale escalated delay.
+            const wasStable =
+                connectedAt > 0 && Date.now() - connectedAt >= STABLE_UPTIME_MS;
+            if (wasStable) backoffMs = MIN_BACKOFF_MS;
+            const waitMs = backoffMs;
+            backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+
+            const msg = `⚠️ OrderCompleted WS issue: ${reason}. Reconnecting in ${Math.round(
+                waitMs / 1000,
+            )}s (attempt ${consecutiveFailures})...`;
             logger.error(msg);
 
-            void sendDiscordAlert(config.discordOnFailWebhookUrl, msg).catch(() => {});
+            // Collapse alert noise: one ping when an outage starts, then a
+            // reminder every OUTAGE_REMINDER_EVERY attempts while it persists.
+            // The "recovered" status is posted by the stability timer in setup.
+            if (!outageAlerted) {
+                outageAlerted = true;
+                void sendDiscordAlert(config.discordOnFailWebhookUrl, msg).catch(() => {});
+            } else if (consecutiveFailures % OUTAGE_REMINDER_EVERY === 0) {
+                void sendDiscordAlert(
+                    config.discordOnFailWebhookUrl,
+                    `⏳ OrderCompleted WS still reconnecting after ${consecutiveFailures} attempts (last: ${reason})`,
+                ).catch(() => {});
+            }
 
             diamond.removeAllListeners(ORDER_COMPLETED_EVENT);
 
@@ -368,7 +445,7 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 void setup().catch((e: any) =>
                     logger.error(`OrderCompleted: reconnect setup failed: ${e?.message ?? e}`),
                 );
-            }, 5_000);
+            }, waitMs);
         };
 
         ws.onclose = (evt: any) => {
