@@ -1,5 +1,5 @@
 import { Worker } from 'bullmq';
-import { CommonConfig } from '../../helpers/config';
+import { ExecutorConfig } from '../../helpers/config';
 import { logger } from '../../helpers/logger';
 import {
     ORDER_SCANNER_QUEUE_NAME,
@@ -14,7 +14,7 @@ import { withTimeout } from '../../helpers/provider';
 const LOCK_DURATION_MS = 180_000; // 3 min
 const JOB_TIMEOUT_MS = 150_000;   // 2.5 min: hard deadline so worker never stalls indefinitely
 
-export function startOrderScannerWorker(config: CommonConfig) {
+export function startOrderScannerWorker(config: ExecutorConfig) {
     initOrderScannerQueue();
 
     const worker = new Worker(

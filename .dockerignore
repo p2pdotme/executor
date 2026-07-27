@@ -1,6 +1,8 @@
 /node_modules
 /dist
-.env
+# Broad glob: .env.production and friends hold raw executor private keys and
+# must never be baked into an image layer.
+.env*
+!.env.example
 /.vscode
 *.log
-deploy.final.yml
