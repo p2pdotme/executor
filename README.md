@@ -1,6 +1,6 @@
 # p2pme-executor
 
-Event-driven + schedule-based contract automation for P2P.me on Base. Listens to on-chain events, runs scheduled jobs (order sweeper, order scanner), and executes contract calls via dedicated executor wallets. Uses ethers.js v6, BullMQ, Redis, Express. Runs as a private worker (Railway or Docker Compose) with a Redis sidecar; nothing is exposed publicly.
+Event-driven + schedule-based contract automation for P2P.me on Base. Listens to on-chain events, runs scheduled jobs (order sweeper, order scanner), and executes contract calls via dedicated executor wallets. Uses ethers.js v6, BullMQ and Redis. Runs as a private worker (Railway or Docker Compose) with a Redis sidecar; the only thing it serves is a `/healthz` liveness probe.
 
 ---
 
@@ -13,7 +13,6 @@ Event-driven + schedule-based contract automation for P2P.me on Base. Listens to
 - [Dry run mode](#dry-run-mode)
 - [Quick start (local)](#quick-start-local)
 - [How it works](#how-it-works)
-- [API endpoints](#api-endpoints)
 - [Deployment](#deployment)
 - [License](#license)
 
@@ -26,7 +25,7 @@ Event-driven + schedule-based contract automation for P2P.me on Base. Listens to
 3. **Order scanner** — Every 1 hour: rescans the last 2 500 blocks to catch any orders the WS listener may have missed.
 4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`).
 5. **Auto-funded wallets** — Five subwallets (toggle, assign, sweeper, cashback, keeper) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
-6. **HTTP API** — Health, registry, tx debug by hash, list tracked orders.
+6. **Liveness probe** — `GET /healthz` and nothing else. There is no API.
 
 ---
 
@@ -42,7 +41,7 @@ src/
 │   └── workers/        # BullMQ workers: toggle, assign, orderSweeper, orderScanner
 ├── helpers/
 │   ├── safeSend.ts     # All contract writes go here (presim → send → wait → alert)
-│   ├── walletManager.ts# Subwallet lifecycle: load/generate/persist, auto-fund
+│   ├── walletManager.ts# Subwallet lifecycle: load from env, auto-fund
 │   ├── discord.ts      # sendDiscordAlert (3 channel webhooks)
 │   ├── multicall.ts    # Multicall3 helper (batch RPC reads into 1 eth_call)
 │   ├── config.ts       # loadExecutorConfig() — fails fast on missing env
@@ -114,7 +113,6 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default `info`) |
 | `DRY_RUN` | `true` to simulate only — no transactions sent (default `false`) |
 | `PORT` | HTTP port (default `8000`) |
-| `EXECUTOR_API_KEY` | Shared secret required by every route except `/healthz`, sent as `x-api-key` or `Authorization: Bearer`. When unset those routes are not served at all. |
 | `CASHBACK_INTEGRATOR_ADDRESS` | B2B cashback programme: integrator address to call `issueCredit` on. Leave unset (or set `CASHBACK_BPS=0`) to disable the programme entirely — the OrderCompleted listener silently no-ops. |
 | `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
 
@@ -208,25 +206,6 @@ safeSend()
        ├─ timeout: check receipt directly, alert, return false
        ├─ reverted: Discord fail alert, return false
        └─ confirmed: Discord success alert, return true
-```
-
----
-
-## API endpoints
-
-The executor is a worker, not a public API — it should be deployed without a public
-domain. `/healthz` is open so platform health checks work; everything else requires
-`EXECUTOR_API_KEY` and is not served at all when that key is unset.
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/healthz` | none | Liveness check |
-| GET | `/registry` | API key | All registered contract automations |
-| GET | `/tx/:hash` | API key | Tx + receipt + revert reason |
-| GET | `/orders` | API key | Order IDs currently tracked by sweeper |
-
-```bash
-curl -H "x-api-key: $EXECUTOR_API_KEY" http://localhost:8000/orders
 ```
 
 ---

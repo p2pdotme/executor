@@ -50,9 +50,6 @@ Every signing key is read from `.env` and nowhere else — the executor never
 generates a wallet and never writes a key to Redis or disk. A missing key is a
 hard boot failure. Redis holds the BullMQ queues and the tracked-order set only.
 
-**Optional:** set `EXECUTOR_API_KEY` to enable the operator debug routes
-(`/registry`, `/orders`, `/tx/:hash`). When unset only `/healthz` is served.
-
 ---
 
 ## Start
@@ -71,7 +68,6 @@ docker compose logs -f executor
 ```bash
 docker compose ps                     # both redis and executor should show Up
 curl http://localhost:8000/healthz    # should return: I'm alive
-curl -H "x-api-key: $EXECUTOR_API_KEY" http://localhost:8000/orders   # tracked order IDs
 ```
 
 On first boot, Discord (success channel) receives all wallet addresses and balances. Fund the subwallets shown — the funding wallet will keep them topped up automatically from that point.
