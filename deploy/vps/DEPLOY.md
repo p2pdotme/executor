@@ -40,10 +40,15 @@ nano .env
 | `DISCORD_ONFAIL_WEBHOOK_URL` | Discord webhook — fail / WS error alerts |
 | `DISCORD_BALANCE_WEBHOOK_URL` | Discord webhook — balance + auto-fund alerts |
 | `ASSIGN_DELAY_IN_SECONDS` | Seconds to wait before assigning merchants (e.g. `90`) |
+| `TOGGLE_EXECUTOR` | Private key of the toggle wallet |
+| `ASSIGN_EXECUTOR` | Private key of the assign wallet |
+| `ORDER_SWEEPER_EXECUTOR` | Private key of the sweeper wallet |
+| `CASHBACK_EXECUTOR` | Private key of the cashback wallet |
+| `KEEPER_EXECUTOR` | Private key of the daily keeper wallet |
 
-**Optional subwallet keys** (`TOGGLE_EXECUTOR`, `ASSIGN_EXECUTOR`, `ORDER_SWEEPER_EXECUTOR`):
-- If set: those private keys are used on every boot.
-- If not set: keys are auto-generated on first boot and persisted in the Redis volume. They survive restarts automatically.
+Every signing key is read from `.env` and nowhere else — the executor never
+generates a wallet and never writes a key to Redis or disk. A missing key is a
+hard boot failure. Redis holds the BullMQ queues and the tracked-order set only.
 
 ---
 
@@ -63,7 +68,6 @@ docker compose logs -f executor
 ```bash
 docker compose ps                     # both redis and executor should show Up
 curl http://localhost:8000/healthz    # should return: I'm alive
-curl http://localhost:8000/orders     # tracked order IDs
 ```
 
 On first boot, Discord (success channel) receives all wallet addresses and balances. Fund the subwallets shown — the funding wallet will keep them topped up automatically from that point.
@@ -94,26 +98,16 @@ docker compose pull
 docker compose up -d
 ```
 
-Wallet keys in Redis survive the update — subwallet keys are never lost across restarts or image updates as long as the `redis_data` volume exists.
-
----
-
-## Wallet key persistence
-
-Auto-generated wallet keys are stored in the Redis `redis_data` Docker volume. This volume persists across:
-- Container restarts
-- `docker compose up -d` (image updates)
-
-The volume is only lost if you run `docker compose down -v`. If that happens, the executor generates new wallets on next boot — you'll see the new addresses in Discord and will need to fund them again.
-
-To avoid this risk, set `TOGGLE_EXECUTOR`, `ASSIGN_EXECUTOR`, and `ORDER_SWEEPER_EXECUTOR` explicitly in `.env` — then keys are always loaded from env, never from Redis.
+Wallet keys live in `.env`, so they are unaffected by image updates. The
+`redis_data` volume only carries queue state and the tracked-order set — losing
+it costs at most one sweeper/scanner cycle, never a key.
 
 ---
 
 ## Rotating a subwallet
 
 1. Generate a new private key for the role you want to rotate.
-2. Add it to `~/.executor/.env`:
+2. Replace its value in `~/executor/.env`:
    ```
    TOGGLE_EXECUTOR=0x<new_private_key>
    ```

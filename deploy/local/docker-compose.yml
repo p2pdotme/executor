@@ -1,8 +1,9 @@
 services:
   redis:
     image: redis:7-alpine
+    # Loopback-only: nothing outside this host should reach the queue store.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -18,7 +19,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
     depends_on:
       redis:

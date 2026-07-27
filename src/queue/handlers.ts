@@ -1,5 +1,5 @@
 import { Contract } from 'ethers';
-import { ContractCallerConfig } from '../helpers/config';
+import { ExecutorConfig } from '../helpers/config';
 import { logger } from '../helpers/logger';
 import {
     ContractJobName,
@@ -13,7 +13,7 @@ import { withTimeout } from '../helpers/provider';
 import { connection } from './index';
 
 export type HandlerContext = {
-    config: ContractCallerConfig;
+    config: ExecutorConfig;
     diamond: Contract;
     // Only populated for the cashback worker — other workers don't need it.
     cashbackIntegrator?: Contract;

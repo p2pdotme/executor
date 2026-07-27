@@ -1,7 +1,7 @@
 import { Contract, Wallet, NonceManager } from 'ethers';
 import { logger } from './logger';
 import { sendOnFail, sendOnSuccess } from './alerts';
-import { ContractCallerConfig } from './config';
+import { ExecutorConfig } from './config';
 
 // Alert formatting helpers
 
@@ -64,7 +64,7 @@ export async function safeSend(
     contract: Contract,
     fnName: string,
     args: any[],
-    config: ContractCallerConfig,
+    config: ExecutorConfig,
     meta: Record<string, any> = {},
     skipPresim = false,
 ): Promise<boolean> {

@@ -1,6 +1,6 @@
 # p2pme-executor
 
-Event-driven + schedule-based contract automation for P2P.me on Base. Listens to on-chain events, runs scheduled jobs (order sweeper, order scanner), and executes contract calls via dedicated executor wallets. Uses ethers.js v6, BullMQ, Redis, Express. Runs on Akash with a Redis sidecar.
+Event-driven + schedule-based contract automation for P2P.me on Base. Listens to on-chain events, runs scheduled jobs (order sweeper, order scanner), and executes contract calls via dedicated executor wallets. Uses ethers.js v6, BullMQ and Redis. Runs as a private worker (Railway or Docker Compose) with a Redis sidecar; the only thing it serves is a `/healthz` liveness probe.
 
 ---
 
@@ -13,8 +13,7 @@ Event-driven + schedule-based contract automation for P2P.me on Base. Listens to
 - [Dry run mode](#dry-run-mode)
 - [Quick start (local)](#quick-start-local)
 - [How it works](#how-it-works)
-- [API endpoints](#api-endpoints)
-- [Deployment (Akash)](#deployment-akash)
+- [Deployment](#deployment)
 - [License](#license)
 
 ---
@@ -25,8 +24,8 @@ Event-driven + schedule-based contract automation for P2P.me on Base. Listens to
 2. **Order sweeper** — Every 1 minute: batch-checks all tracked orders via Multicall3, untracking completed/cancelled ones and auto-cancelling expired ones.
 3. **Order scanner** — Every 1 hour: rescans the last 2 500 blocks to catch any orders the WS listener may have missed.
 4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`).
-5. **Auto-funded wallets** — Four subwallets (toggle, assign, sweeper, cashback) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
-6. **HTTP API** — Health, registry, tx debug by hash, list tracked orders.
+5. **Auto-funded wallets** — Five subwallets (toggle, assign, sweeper, cashback, keeper) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
+6. **Liveness probe** — `GET /healthz` and nothing else. There is no API.
 
 ---
 
@@ -42,7 +41,7 @@ src/
 │   └── workers/        # BullMQ workers: toggle, assign, orderSweeper, orderScanner
 ├── helpers/
 │   ├── safeSend.ts     # All contract writes go here (presim → send → wait → alert)
-│   ├── walletManager.ts# Subwallet lifecycle: load/generate/persist, auto-fund
+│   ├── walletManager.ts# Subwallet lifecycle: load from env, auto-fund
 │   ├── discord.ts      # sendDiscordAlert (3 channel webhooks)
 │   ├── multicall.ts    # Multicall3 helper (batch RPC reads into 1 eth_call)
 │   ├── config.ts       # loadExecutorConfig() — fails fast on missing env
@@ -60,37 +59,30 @@ All contract **writes** go through `safeSend()`. It handles pre-simulation, send
 
 ## Wallet management
 
-The executor uses **three subwallets** (toggle, assign, sweeper) plus one **funding wallet**. You never need to manage subwallet keys manually.
+The executor uses **five subwallets** (toggle, assign, sweeper, cashback, keeper) plus one **funding wallet**.
 
-### Priority on every boot
+### Keys come from the environment, only
 
-```
-env var set?  →  use it directly (authoritative)
-              ↓ no
-Redis has key?  →  load from previous boot (persisted key)
-               ↓ no
-Generate fresh wallet, save to Redis, log the address
-```
-
-### To bring your own wallets
-
-Set the optional env vars:
+Every signing key is read from an env var at boot. The executor never generates a wallet at runtime and never writes a key to Redis, disk, or logs — your platform's secret manager is the single source of truth. A missing key is a hard boot failure.
 
 ```env
 TOGGLE_EXECUTOR=0x...privatekey
 ASSIGN_EXECUTOR=0x...privatekey
 ORDER_SWEEPER_EXECUTOR=0x...privatekey
+CASHBACK_EXECUTOR=0x...privatekey
+KEEPER_EXECUTOR=0x...privatekey
+FUNDING_EXECUTOR=0x...privatekey
 ```
 
-If these are set, they are used on every boot. If not set, the executor creates and persists wallets in Redis automatically.
+Redis is used for the BullMQ job queues and the tracked-order set only. It holds no secrets.
 
 ### To rotate a wallet
 
-Update the env var and redeploy. The new key is used immediately; the Redis entry for that role is ignored when an env var is present.
+Update the env var and redeploy. The new key is used immediately.
 
 ### Funding
 
-Only `FUNDING_EXECUTOR` is required. The funding wallet tops up any subwallet that drops below `MIN_BASE_BALANCE_ETH` (default 0.005 ETH), sending enough to bring it to 0.02 ETH. On every boot and every 10 minutes, balances are checked and Discord alerts are sent to the balance channel.
+`FUNDING_EXECUTOR` holds the float. The funding wallet tops up any subwallet that drops below `MIN_BASE_BALANCE_ETH` (default 0.005 ETH), sending enough to bring it to 0.02 ETH. On every boot and every 10 minutes, balances are checked and Discord alerts are sent to the balance channel.
 
 On first boot, Discord (success channel) receives all wallet addresses so you know what to fund.
 
@@ -98,7 +90,7 @@ On first boot, Discord (success channel) receives all wallet addresses so you kn
 
 ## Environment variables
 
-Copy `.env.example` to `.env` for local dev. For Akash, set these in the SDL `env:` block.
+Copy `.env.example` to `.env` for local dev. In production set these in the platform's secret manager (Railway variables / compose `.env` on the host) — never in a committed file.
 
 ### Required
 
@@ -124,14 +116,17 @@ Copy `.env.example` to `.env` for local dev. For Akash, set these in the SDL `en
 | `CASHBACK_INTEGRATOR_ADDRESS` | B2B cashback programme: integrator address to call `issueCredit` on. Leave unset (or set `CASHBACK_BPS=0`) to disable the programme entirely — the OrderCompleted listener silently no-ops. |
 | `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
 
-### Optional — bring your own subwallet keys
+### Required — subwallet keys
+
+All five are mandatory; the executor refuses to boot if any is missing.
 
 | Variable | Description |
 |---|---|
-| `TOGGLE_EXECUTOR` | Private key for the toggle wallet (if not set, auto-managed) |
-| `ASSIGN_EXECUTOR` | Private key for the assign wallet (if not set, auto-managed) |
-| `ORDER_SWEEPER_EXECUTOR` | Private key for the sweeper wallet (if not set, auto-managed) |
-| `CASHBACK_EXECUTOR` | Private key for the cashback wallet (if not set, auto-managed). Its address must be whitelisted on the cashback integrator via `setCreditIssuer(addr, true)` before `issueCredit` calls land — the startup Discord message prints the address explicitly so you know what to whitelist. |
+| `TOGGLE_EXECUTOR` | Private key for the toggle wallet |
+| `ASSIGN_EXECUTOR` | Private key for the assign wallet |
+| `ORDER_SWEEPER_EXECUTOR` | Private key for the sweeper wallet |
+| `CASHBACK_EXECUTOR` | Private key for the cashback wallet. Its address must be whitelisted on the cashback integrator via `setCreditIssuer(addr, true)` before `issueCredit` calls land — the startup Discord message prints the address explicitly so you know what to whitelist. |
+| `KEEPER_EXECUTOR` | Private key for the daily keeper wallet (`approveUnstakeBatch` + `blacklistInactiveMerchants`) |
 
 ---
 
@@ -215,17 +210,6 @@ safeSend()
 
 ---
 
-## API endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/healthz` | Liveness check |
-| GET | `/registry` | All registered contract automations |
-| GET | `/tx/:hash` | Tx + receipt + revert reason |
-| GET | `/orders` | Order IDs currently tracked by sweeper |
-
----
-
 ## Deployment
 
 ### VPS (recommended)
@@ -250,9 +234,11 @@ docker compose logs -f executor
 docker compose pull && docker compose up -d
 ```
 
-### Akash
+### Networking
 
-Fill in `deploy.final.yml` (see comments in the file), build and push the image, then upload the SDL in [Akash Console](https://console.akash.network). **Do not commit the filled-in file to git.**
+The executor exposes no service anyone else consumes — deploy it without a public
+domain. The VPS compose file binds the HTTP port to `127.0.0.1` for the same reason,
+and Redis is reachable only on the internal network.
 
 ---
 

@@ -1,4 +1,4 @@
-import { CommonConfig } from '../helpers/config';
+import { ExecutorConfig } from '../helpers/config';
 import { logger } from '../helpers/logger';
 import { getBaseHttpProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
@@ -9,7 +9,7 @@ const STATUS_DONE_THRESHOLD = 3; // >= 3 -> completed / cancelled
 
 // returns active (status < STATUS_DONE_THRESHOLD) orderIds from logs
 export async function getPendingOrdersFromLogs(
-    config: CommonConfig,
+    config: ExecutorConfig,
     fromBlock: number,
     toBlock: number,
 ): Promise<string[]> {

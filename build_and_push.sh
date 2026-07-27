@@ -11,7 +11,7 @@ TAG="${TAG:-v0.1.0}"
 echo "📦 Creating build..."
 npm run build
 
-echo "🚀 Building Docker image for Akash..."
+echo "🚀 Building Docker image..."
 docker build --platform linux/amd64 -t $IMAGE_NAME:$TAG .
 
 echo "✅ Build complete!"

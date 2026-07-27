@@ -1,5 +1,5 @@
 import { Contract } from 'ethers';
-import { ToggleConfig, AssignConfig } from '../helpers/config';
+import { ExecutorConfig } from '../helpers/config';
 import { getBaseWsProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
@@ -20,7 +20,7 @@ const MAX_BACKOFF_MS = 60_000;
 const STABLE_UPTIME_MS = 120_000;
 const OUTAGE_REMINDER_EVERY = 12;
 
-export async function attachOrderPlacedListener(config: ToggleConfig & AssignConfig) {
+export async function attachOrderPlacedListener(config: ExecutorConfig) {
     const ASSIGN_DELAY_MS = config.assignDelayInSeconds * 1000 + 1_000; // 1s buffer
 
     let reconnectScheduled = false;

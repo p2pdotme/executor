@@ -1,5 +1,4 @@
 import { Wallet, NonceManager, JsonRpcProvider, ethers } from 'ethers';
-import IORedis from 'ioredis';
 import { logger } from './logger';
 import { sendDiscordAlert } from './discord';
 
@@ -30,53 +29,39 @@ export class WalletManager {
     private initialized = false;
 
     /**
-     * Priority order for each wallet on every boot:
-     *   1. Env var set → use it (always authoritative; update env var to rotate wallet)
-     *   2. Env var absent → load from Redis (persisted from a previous boot)
-     *   3. Not in Redis either → generate a fresh wallet and persist to Redis
+     * Every signing key comes from the environment and nowhere else. Keys are
+     * never generated at runtime and never written to Redis (or any other
+     * store) — the secret manager of the host platform is the single source of
+     * truth, and rotating a wallet means updating its env var and redeploying.
+     * A missing key is a hard boot failure rather than a silent auto-generated
+     * wallet that nobody funds or whitelists.
      */
-    async init(provider: JsonRpcProvider, redis: IORedis): Promise<void> {
+    async init(provider: JsonRpcProvider): Promise<void> {
         this.provider = provider;
 
-        const envKeys: Record<WalletRole, string | undefined> = {
-            [WalletRole.Toggle]: process.env.TOGGLE_EXECUTOR,
-            [WalletRole.Assign]: process.env.ASSIGN_EXECUTOR,
-            [WalletRole.Sweeper]: process.env.ORDER_SWEEPER_EXECUTOR,
+        const envVarNames: Record<WalletRole, string> = {
+            [WalletRole.Toggle]: 'TOGGLE_EXECUTOR',
+            [WalletRole.Assign]: 'ASSIGN_EXECUTOR',
+            [WalletRole.Sweeper]: 'ORDER_SWEEPER_EXECUTOR',
             // Must match the address whitelisted via
-            // CashbackIntegrator.setCreditIssuer(issuer, true). Generated +
-            // persisted on first boot if unset, like the others.
-            [WalletRole.Cashback]: process.env.CASHBACK_EXECUTOR,
+            // CashbackIntegrator.setCreditIssuer(issuer, true).
+            [WalletRole.Cashback]: 'CASHBACK_EXECUTOR',
             // Signs the daily permissionless keeper txs (approveUnstakeBatch +
-            // blacklistInactiveMerchants). Both calls are permissionless, so any
-            // funded wallet works; generated + persisted on first boot if unset.
-            [WalletRole.Keeper]: process.env.KEEPER_EXECUTOR,
+            // blacklistInactiveMerchants).
+            [WalletRole.Keeper]: 'KEEPER_EXECUTOR',
         };
 
         for (const role of Object.values(WalletRole) as WalletRole[]) {
-            const redisKey = `executor:wallet:${role}:pk`;
-            let pk: string;
-
-            const envPk = envKeys[role];
-            if (envPk) {
-                // Env var wins — use it directly, no Redis involved
-                pk = envPk;
-                logger.info(`[WalletManager] ${ROLE_LABELS[role]} wallet loaded from env: ${new Wallet(pk).address}`);
-            } else {
-                const redisPk = await redis.get(redisKey);
-                if (redisPk) {
-                    // Persisted from a previous boot
-                    pk = redisPk;
-                    logger.info(`[WalletManager] ${ROLE_LABELS[role]} wallet loaded from Redis: ${new Wallet(pk).address}`);
-                } else {
-                    // First time with no env var — generate and persist
-                    const fresh = Wallet.createRandom();
-                    pk = fresh.privateKey;
-                    await redis.set(redisKey, pk);
-                    logger.info(`[WalletManager] ${ROLE_LABELS[role]} wallet generated and saved to Redis: ${fresh.address}`);
-                }
+            const envVar = envVarNames[role];
+            const pk = (process.env[envVar] ?? '').trim();
+            if (!pk) {
+                throw new Error(
+                    `[WalletManager] ${envVar} is not set — every executor wallet key must be provided via the environment`,
+                );
             }
 
             const signer = new NonceManager(new Wallet(pk, provider));
+            logger.info(`[WalletManager] ${ROLE_LABELS[role]} wallet loaded from ${envVar}: ${await signer.getAddress()}`);
             this.signers.set(role, signer);
         }
 
