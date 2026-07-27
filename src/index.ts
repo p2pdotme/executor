@@ -182,7 +182,6 @@ async function start() {
     // Workers
     startToggleWorker(config, walletManager);
     startAssignWorker(config, walletManager);
-    // startToggleScheduleWorker(config, walletManager); // disabled — enable when needed
     startOrderSweeperWorker(config, walletManager);
     startOrderScannerWorker(config);
     startCashbackWorker(config, walletManager); // no-op when programme env unset

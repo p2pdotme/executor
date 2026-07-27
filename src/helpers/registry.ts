@@ -42,29 +42,7 @@ export const CONTRACT_AUTOMATION_REGISTRY = [
             'Assigns merchants to an order if it is still in Placed state. Executed 90 seconds after OrderPlaced.',
     },
 
-    // 3. Scheduled merchant cleanup — every 30 minutes
-    {
-        key: 'toggleSchedule.removeNonEligibleMerchantsByCircleId',
-        contract: 'Diamond',
-        network: 'base-mainnet',
-        functionName: 'removeNonEligibleMerchantsByCircleId',
-        signature:
-            'removeNonEligibleMerchantsByCircleId(uint256 circleId, address[] prevs, address[] targets)',
-        inputs: [
-            { name: 'circleId', type: 'uint256', source: 'schedule' },
-            { name: 'prevs', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
-            { name: 'targets', type: 'address[]', source: 'getNonEligibleMerchantsByCircleId' },
-        ],
-        trigger: {
-            type: 'schedule',
-            interval: '30m',
-        },
-        publicCallable: true,
-        description:
-            'Periodically cleans up inactive or non-eligible merchants for each currency using on-chain scanning.',
-    },
-
-    // 4. Order sweeper — cancels expired orders
+    // 3. Order sweeper — cancels expired orders
     {
         key: 'orderSweeper.autoCancelExpiredOrders',
         contract: 'Diamond',

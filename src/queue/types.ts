@@ -18,11 +18,6 @@ export type OrderJobData = {
     txHash?: string;
 };
 
-// ToggleSchedule job payload
-export type ToggleScheduleJobData = {
-    currency: string;
-};
-
 // IssueCashbackCredit job payload — the BUY/SELL cashback programme handler
 // (see queue/handlers.ts → issueCashbackCredit) consumes this.
 export type IssueCashbackCreditJobData = {
@@ -37,6 +32,5 @@ export type EmptyJobData = Record<string, never>;
 export type ContractJobData =
     | ToggleOfflineJobData
     | OrderJobData
-    | ToggleScheduleJobData
     | IssueCashbackCreditJobData
     | EmptyJobData;
