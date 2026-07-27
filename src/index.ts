@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { timingSafeEqual } from 'crypto';
 import { ethers } from 'ethers';
 import { loadExecutorConfig } from './helpers/config';
 import { startToggleWorker } from './queue/workers/toggleWorker';
@@ -17,10 +18,40 @@ import { startListeners } from './listeners';
 import { startSchedulers } from './schedulers';
 import { getTrackedOrderIds, syncOrderIds } from './utils/orderTracker';
 import { WalletManager } from './helpers/walletManager';
-import { connection } from './queue';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
 const BALANCE_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Every route except /healthz is an operator debug surface (automation registry,
+ * tracked orders, RPC-backed tx inspection). They are gated behind a shared
+ * secret in EXECUTOR_API_KEY, sent as `x-api-key` or `Authorization: Bearer`.
+ * When the key is unset the routes are not mounted at all, so a deploy that
+ * forgets to configure it exposes nothing instead of falling back to open
+ * access.
+ */
+const API_KEY = (process.env.EXECUTOR_API_KEY ?? '').trim();
+
+function timingSafeEqualStr(received: unknown, expected: string): boolean {
+    if (typeof received !== 'string') return false;
+    const a = Buffer.from(received);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+}
+
+function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const header = req.headers['authorization'];
+    const bearer = typeof header === 'string' && header.startsWith('Bearer ')
+        ? header.slice('Bearer '.length)
+        : undefined;
+    const presented = (req.headers['x-api-key'] as string | undefined) ?? bearer;
+    if (!timingSafeEqualStr(presented, API_KEY)) {
+        res.status(401).json({ error: 'unauthorized' });
+        return;
+    }
+    next();
+}
 
 async function start() {
     const config = loadExecutorConfig();
@@ -35,9 +66,9 @@ async function start() {
 
     const provider = getBaseHttpProvider(config);
 
-    // Init wallet manager — generates subwallets on first boot, loads from Redis on restart
+    // Init wallet manager — every signing key is read from the environment
     const walletManager = new WalletManager();
-    await walletManager.init(provider, connection);
+    await walletManager.init(provider);
 
     const fundingSigner = getFundingSigner(config);
     const fundingAddress = await fundingSigner.getAddress();
@@ -63,7 +94,16 @@ async function start() {
     }
 
     const app = express();
+    app.disable('x-powered-by');
     app.get('/healthz', (_req, res) => res.status(200).send("I'm alive"));
+
+    if (API_KEY) {
+        app.use(['/registry', '/orders', '/tx'], requireApiKey);
+    } else {
+        logger.warn('EXECUTOR_API_KEY unset — debug routes (/registry, /orders, /tx/:hash) are disabled; only /healthz is served');
+        app.use(['/registry', '/orders', '/tx'], (_req, res) => res.status(404).end());
+    }
+
     app.get('/registry', (_req, res) => res.json(CONTRACT_AUTOMATION_REGISTRY));
 
     app.get('/tx/:hash', async (req, res) => {
