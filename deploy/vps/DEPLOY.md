@@ -33,6 +33,7 @@ nano .env
 
 | Variable | Description |
 |---|---|
+| `REDIS_PASSWORD` | Redis `requirepass` value; compose builds `REDIS_URL` from it. Generate with `openssl rand -base64 32` |
 | `ALCHEMY_API_KEY` | Alchemy key for Base mainnet |
 | `DIAMOND_ADDRESS` | Diamond contract on Base |
 | `FUNDING_EXECUTOR` | Private key of the funding wallet |
@@ -121,6 +122,7 @@ it costs at most one sweeper/scanner cycle, never a key.
 
 ## Notes
 
-- The HTTP port `8000` is bound to `127.0.0.1` only — not exposed to the public internet. Use a reverse proxy (nginx, Caddy) if you need external access.
+- The HTTP port `8000` is bound to `127.0.0.1` only — not exposed to the public internet. Use a reverse proxy (nginx, Caddy) if you need external access, and authenticate it there.
+- Redis publishes no port at all and requires `REDIS_PASSWORD`, so it is reachable only from the executor container on the compose network. To rotate that password: change it in `.env`, then `docker compose up -d` (queue state in `redis_data` survives; in-flight jobs re-run).
 - Log rotation: executor logs capped at 50 MB × 3 files; Redis logs at 10 MB × 3 files.
 - Both containers restart automatically on crash (`restart: always`).

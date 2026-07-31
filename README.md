@@ -108,7 +108,8 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 
 | Variable | Description |
 |---|---|
-| `REDIS_URL` | Default: `redis://redis:6379`. Use `redis://localhost:6379` for local dev |
+| `REDIS_URL` | Default: `redis://redis:6379`. Use `redis://localhost:6379` for local dev. Off a private network it must be an authenticated `rediss://` URL — the executor refuses to boot against an open or cleartext Redis on a public host |
+| `ALLOW_INSECURE_REDIS` | `true` to downgrade the Redis connection check above from a boot failure to a warning. Escape hatch only |
 | `MIN_BASE_BALANCE_ETH` | Minimum subwallet ETH before auto-fund kicks in (default `0.005`) |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default `info`) |
 | `DRY_RUN` | `true` to simulate only — no transactions sent (default `false`) |
@@ -238,7 +239,20 @@ docker compose pull && docker compose up -d
 
 The executor exposes no service anyone else consumes — deploy it without a public
 domain. The VPS compose file binds the HTTP port to `127.0.0.1` for the same reason,
-and Redis is reachable only on the internal network.
+and Redis is reachable only on the internal network, behind `requirepass`.
+
+Redis holds queues and the tracked-order set — never key material — but write
+access to it is write access to the work of a service that signs transactions,
+so the executor validates `REDIS_URL` at boot and fails closed on an open or
+cleartext connection to a non-private host.
+
+Outbound Discord alerts and log lines pass through a redactor
+(`src/helpers/scrub.ts`) that masks any known secret value before it leaves the
+process, so an upstream error string cannot carry the RPC key or a URL password
+into a chat channel.
+
+See [SECURITY.md](SECURITY.md) for the service's security model and how to
+report a vulnerability.
 
 ---
 
