@@ -4,9 +4,12 @@ services:
     restart: always
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    # No `ports:` on purpose — Redis is reachable only from the compose network.
+    # requirepass on top of that, so another container on the same host cannot
+    # read or write the executor's queues. REDIS_PASSWORD comes from .env.
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
       interval: 5s
       timeout: 2s
       retries: 5
@@ -20,7 +23,10 @@ services:
     image: youruser/p2pme-executor:v0.1.0
     env_file: .env
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://default:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}@redis:6379
+    # Loopback-only: the executor is a worker, not an API. Nothing outside this
+    # host should reach it — put a reverse proxy in front only if you need the
+    # healthz probe remotely, and authenticate it there.
     ports:
       - "127.0.0.1:8000:8000"
     restart: always

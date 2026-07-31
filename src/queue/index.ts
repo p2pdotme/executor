@@ -3,6 +3,7 @@ import IORedis from 'ioredis';
 import { ExecutorConfig } from '../helpers/config';
 import { ContractJobData } from './types';
 import { logger } from '../helpers/logger';
+import { assertSafeRedisUrl } from '../helpers/redisUrl';
 
 export const TOGGLE_QUEUE_NAME = 'toggle-calls';
 export const ASSIGN_QUEUE_NAME = 'assign-calls';
@@ -14,6 +15,8 @@ export const CASHBACK_QUEUE_NAME = 'cashback-calls';
 export const DAILY_KEEPER_QUEUE_NAME = 'daily-keeper-calls';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
+// Refuses to boot against an open Redis on a public host — see helpers/redisUrl.
+assertSafeRedisUrl(REDIS_URL);
 export const connection = new IORedis(REDIS_URL, {
     maxRetriesPerRequest: null,
     retryStrategy(times) {
