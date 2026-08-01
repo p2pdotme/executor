@@ -1,6 +1,48 @@
 # p2pme-executor
 
-Event-driven + schedule-based contract automation for P2P.me on Base. Listens to on-chain events, runs scheduled jobs (order sweeper, order scanner), and executes contract calls via dedicated executor wallets. Uses ethers.js v6, BullMQ and Redis. Runs as a private worker (Railway or Docker Compose) with a Redis sidecar; the only thing it serves is a `/healthz` liveness probe.
+## Who can run this?
+
+`p2pme-executor` is a **permissionless keeper**. All contract functions it calls on the Diamond are public (`external`) and do not require any admin role, including:
+
+- `assignMerchants`
+- `removeNonEligibleMerchants`
+- `removeNonEligibleMerchantsByCircleId`
+- `autoCancelExpiredOrders`
+- `approveUnstakeBatch`
+- `blacklistInactiveMerchants`
+
+This means anyone in the community can run an executor to help operate the protocol. Running an executor does **not** grant any protocol privileges, and multiple operators can run simultaneously without coordination. If another executor has already processed a task, the transaction simply becomes a no-op during simulation.
+
+The only exception is the optional **B2B Cashback** program, which requires an issuer to be whitelisted via `setCreditIssuer`. Community-operated executors can simply leave this feature disabled.
+
+## No funds at risk
+
+The executor never custodys user funds.
+
+It:
+- Holds no USDC.
+- Holds no merchant stake.
+- Has no token approvals.
+
+Its wallets are used only to pay Base network gas fees.
+
+Operators generate all six wallets themselves (five executor wallets and one funding wallet), fund the `FUNDING_EXECUTOR` wallet with a small amount of ETH, and the executor automatically distributes gas to the remaining wallets as needed. The only funds at risk are this gas balance.
+
+## No keys at risk
+
+All private keys are supplied through environment variables.
+
+The executor:
+- Reads keys only during startup.
+- Never generates keys at runtime.
+- Never stores keys in Redis.
+- Never writes keys to disk.
+- Never logs private keys.
+- Fails to start if any required key is missing.
+
+> **Note on the earlier design:** To simplify first-time setup, the executor previously generated keeper wallets automatically and stored their private keys in the operator's own Redis instance. This allowed operators to start the executor without manually creating five keeper wallets, while keeping the generated addresses stable across restarts. Those keys were stored only in the deployment's own Redis instance, accessible only to the operator running it. They were also **gas-only wallets** with **no protocol authority**, holding no user funds or privileged permissions. Even so, storing private keys in any datastore is an unnecessary security risk - this feature now removed.
+
+> Today, all private keys must be supplied through environment variables at startup. Redis now stores only job queues and tracked order IDs, it never stores secrets.
 
 ---
 
