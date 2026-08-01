@@ -34,9 +34,13 @@ export type ExecutorConfig = {
 // CASHBACK_BPS_BY_CURRENCY env (parsed below) takes precedence per currency.
 // ARS (Argentina) and MEX (Mexico) have tighter spreads where users were
 // farming lotpot credits, so both credit 1% (100 bps) vs the default 2%.
+// VEN (Venezuela) is switched off entirely — 0 bps means the OrderCompleted
+// listener resolves the rate, sees a non-positive bps and skips the order
+// without enqueueing a credit.
 const DEFAULT_CASHBACK_BPS_BY_CURRENCY: Record<string, number> = {
     ARS: 100,
     MEX: 100,
+    VEN: 0,
 };
 
 function requireEnv(name: string): string {
