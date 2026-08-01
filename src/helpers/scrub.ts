@@ -13,7 +13,16 @@
  */
 
 /** Env vars whose value is secret. Suffix-matched so rotations/new keys are covered. */
-const SECRET_ENV_SUFFIXES = ['_EXECUTOR', '_API_KEY', '_SECRET', '_TOKEN', 'WEBHOOK_URL', '_PASSWORD'];
+const SECRET_ENV_SUFFIXES = [
+    '_EXECUTOR',
+    '_API_KEY',
+    '_SECRET',
+    '_TOKEN',
+    'WEBHOOK_URL',
+    '_PASSWORD',
+    // Goldsky embeds the project id in the path, so the whole URL is a credential.
+    'SUBGRAPH_URL',
+];
 /** Shorter values are not credential-shaped and redacting them would mangle output. */
 const MIN_SECRET_LENGTH = 12;
 
