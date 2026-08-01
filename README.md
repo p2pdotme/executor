@@ -156,7 +156,8 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `DRY_RUN` | `true` to simulate only — no transactions sent (default `false`) |
 | `PORT` | HTTP port (default `8000`) |
 | `CASHBACK_INTEGRATOR_ADDRESS` | B2B cashback programme: integrator address to call `issueCredit` on. Leave unset (or set `CASHBACK_BPS=0`) to disable the programme entirely — the OrderCompleted listener silently no-ops. |
-| `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
+| `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme unless a per-currency override below is positive. |
+| `CASHBACK_BPS_BY_CURRENCY` | Per-currency overrides for `CASHBACK_BPS`, as a comma-separated list of `CODE:bps` pairs keyed by the order's currency symbol (e.g. `ARS:100,MEX:100,VEN:0`). Built-in defaults apply even when unset: `ARS` and `MEX` credit 1% (`100` bps), `VEN` credits nothing (`0` bps). Entries here override those defaults per currency; currencies not listed use `CASHBACK_BPS`. |
 
 ### Required — subwallet keys
 
