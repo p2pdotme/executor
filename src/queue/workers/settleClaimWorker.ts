@@ -19,9 +19,11 @@ const LOCK_DURATION_MS = 180_000; // 3 min
 // atomically — so even if a settle overlaps the once-a-day keeper run, the two
 // never collide on a nonce. Calls the permissionless settleClaim, so the Keeper
 // wallet needs NO on-chain whitelist — just ETH for gas.
-// safeSend runs a presim staticCall first, so a claim that is not-yet-due or
-// already settled reverts in simulation at ZERO gas and returns false — no
-// wasted gas, no retry loop.
+// We presim here rather than letting safeSend do it, because safeSend alerts
+// Discord on EVERY presim revert. The reconciliation scanner re-enqueues an
+// unsettleable claim every tick forever, so that would be a permanent alert
+// loop. Instead: a reverting claim costs 0 gas, is logged, and pings Discord
+// only the FIRST time we see it fail (alertedClaims below).
 export function startSettleClaimWorker(config: ExecutorConfig, walletManager: WalletManager) {
     if (!config.insuranceDiamondAddress) {
         logger.info('settle-claim-worker: INSURANCE_DIAMOND_ADDRESS unset — insurance settlement keeper disabled');
@@ -30,6 +32,11 @@ export function startSettleClaimWorker(config: ExecutorConfig, walletManager: Wa
 
     const signer = walletManager.getSigner(WalletRole.Keeper);
     const insurance = new Contract(config.insuranceDiamondAddress, INSURANCE_ABI, signer);
+
+    // claimIds we've already reported as unsettleable, so the 15-min scanner
+    // doesn't turn one stuck claim into a permanent Discord alert loop. Cleared
+    // on restart, which is the right cadence for a re-reminder.
+    const alertedClaims = new Set<string>();
 
     initSettleClaimQueue();
 
@@ -47,15 +54,33 @@ export function startSettleClaimWorker(config: ExecutorConfig, walletManager: Wa
             logger.info(`▶️ settle-claim-worker: job start claimId= ${claimId} jobId= ${job.id}`);
 
             try {
-                // presim on (default): stale / not-yet-due claims revert in
-                // simulation at 0 gas → safeSend returns false, we log, no
-                // retry, no wasted gas.
+                // Presim ourselves so a permanently-unsettleable claim doesn't
+                // alert on every scanner tick. Stale / not-yet-due / already
+                // settled claims revert here at 0 gas.
+                try {
+                    await (insurance as any).settleClaim.staticCall(claimId);
+                } catch (simErr: any) {
+                    const reason = simErr?.shortMessage ?? simErr?.message ?? String(simErr);
+                    logger.warn(`settle-claim-worker: presim reverted claimId= ${claimId} — skipping: ${reason}`);
+                    if (!alertedClaims.has(claimId)) {
+                        alertedClaims.add(claimId);
+                        await sendOnFail(
+                            config,
+                            `settleClaim | staticCall reverted | claimId=${claimId}\n↳ ${reason}\n↳ further failures for this claim are suppressed until restart`,
+                        );
+                    }
+                    return;
+                }
+                alertedClaims.delete(claimId);
+
+                // skipPresim=true: we just simulated this exact call above.
                 const ok = await safeSend(
                     insurance,
                     'settleClaim',
                     [claimId],
                     config,
                     { claimId },
+                    true,
                 );
 
                 if (!ok) {

@@ -7,8 +7,10 @@ import {
     addSettleClaimJob,
     connection,
 } from '../index';
+import { withTimeout } from '../../helpers/provider';
 
 const LOCK_DURATION_MS = 180_000; // 3 min
+const JOB_TIMEOUT_MS = 150_000;   // 2.5 min: hard deadline, must stay under the lock
 const PAGE = 500;
 const MAX_GQL_RETRIES = 6;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -98,7 +100,9 @@ export function startSettleClaimScannerWorker(config: ExecutorConfig) {
 
             logger.info('settle-scanner: starting reconciliation tick');
             const nowSec = Math.floor(Date.now() / 1000);
-            const due = await fetchDueClaims(config.subgraphUrl, nowSec);
+            // Paged + retried gql can outrun the 3-min lock; without a deadline
+            // BullMQ would mark the job stalled and run a second scan concurrently.
+            const due = await withTimeout(fetchDueClaims(config.subgraphUrl, nowSec), JOB_TIMEOUT_MS);
 
             if (due.length === 0) {
                 logger.info('settle-scanner: no overdue approved claims');

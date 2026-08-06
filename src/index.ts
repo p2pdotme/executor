@@ -78,7 +78,7 @@ async function start() {
     await startListeners(config);
     logger.info('listeners started');
 
-    await startSchedulers();
+    await startSchedulers(config);
     logger.info('schedulers started');
 
     // Workers

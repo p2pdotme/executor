@@ -131,7 +131,12 @@ export function initSettleClaimQueue() {
             connection,
             defaultJobOptions: {
                 removeOnComplete: true,
-                removeOnFail: { count: 100 },
+                // MUST be `true`, not a retained count. BullMQ's jobId dedupe keys
+                // off the job hash EXISTING in any state, so a retained failed
+                // `settle-<claimId>` would silently swallow every later re-enqueue
+                // and strand that claim forever. Evicting it lets the next
+                // reconciliation tick pick the claim back up.
+                removeOnFail: true,
                 // settleClaim is idempotent (presim re-checks status/delay/auth on
                 // every run), so transient RPC/nonce hiccups are the only realistic
                 // failure worth retrying. A permanent revert is caught in presim and
@@ -151,7 +156,10 @@ export function initSettleClaimScannerQueue() {
             connection,
             defaultJobOptions: {
                 removeOnComplete: true,
-                removeOnFail: { count: 100 },
+                // Same reason as the settle queue: the startup one-shot uses a
+                // fixed jobId, so a retained failure would kill boot-time
+                // reconciliation for every subsequent restart.
+                removeOnFail: true,
                 attempts: 2,
                 backoff: { type: 'exponential', delay: 10000 },
             },
@@ -259,7 +267,14 @@ export async function addSettleClaimJob(
     );
 
     const state = await job.getState();
-    if (state !== 'delayed' && state !== 'waiting') {
+    if (state === 'failed') {
+        // Should be unreachable — the queue sets removeOnFail:true precisely so a
+        // failed job can't shadow a re-enqueue. If it ever fires, the claim is
+        // stuck and no scanner tick will recover it.
+        logger.warn(
+            `queue(${SETTLE_CLAIM_QUEUE_NAME}): re-enqueue SHADOWED by a retained failed job — jobId= ${job.id} claimId= ${data.claimId}; claim will NOT settle until it is removed`,
+        );
+    } else if (state !== 'delayed' && state !== 'waiting') {
         logger.info(
             `queue(${SETTLE_CLAIM_QUEUE_NAME}): job DEDUPED — jobId= ${job.id} already in state= ${state} (OK — settle fires once per claim)`,
         );
