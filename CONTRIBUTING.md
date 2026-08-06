@@ -5,7 +5,7 @@
 1. Clone the repo and install dependencies: `npm install`
 2. Copy `.env.example` to `.env` and fill in values.
    - `FUNDING_EXECUTOR` is required (funding wallet private key).
-   - Subwallet keys (`TOGGLE_EXECUTOR`, `ASSIGN_EXECUTOR`, `ORDER_SWEEPER_EXECUTOR`) are optional — the executor generates and persists them automatically if not set.
+   - All five subwallet keys (`TOGGLE_EXECUTOR`, `ASSIGN_EXECUTOR`, `ORDER_SWEEPER_EXECUTOR`, `CASHBACK_EXECUTOR`, `KEEPER_EXECUTOR`) are required — keys are read from the environment only, and a missing one fails the boot.
    - Set `DRY_RUN=true` to run against mainnet without sending any transactions.
 3. Start Redis and the app:
 
@@ -16,7 +16,7 @@
 
    **Option B — host Redis**
    ```bash
-   docker run -d -p 6379:6379 redis:7-alpine
+   docker run -d -p 127.0.0.1:6379:6379 redis:7-alpine
    REDIS_URL=redis://localhost:6379 npm run dev
    ```
 
@@ -34,7 +34,7 @@
 
 - `npm run build` must pass with zero TypeScript errors
 - `npx tsc --noEmit` for a quick check without emitting files
-- Do not commit any file containing secrets: `.env`, `deploy.final.yml`, or any file with real private keys / API keys (`.gitignore` covers these)
+- Do not commit any file containing secrets: anything `.env*` other than `.env.example`, or any file with real private keys / API keys (`.gitignore` covers these)
 
 ## Security
 

@@ -1,7 +1,7 @@
-import express from 'express';
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { createServer } from 'http';
 import { ethers } from 'ethers';
 import { loadExecutorConfig } from './helpers/config';
 import { startToggleWorker } from './queue/workers/toggleWorker';
@@ -13,13 +13,11 @@ import { startDailyKeeperWorker } from './queue/workers/dailyKeeperWorker';
 import { startSettleClaimWorker } from './queue/workers/settleClaimWorker';
 import { startSettleClaimScannerWorker } from './queue/workers/settleClaimScannerWorker';
 import { logger } from './helpers/logger';
-import { CONTRACT_AUTOMATION_REGISTRY } from './helpers/registry';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
 import { startListeners } from './listeners';
 import { startSchedulers } from './schedulers';
-import { getTrackedOrderIds, syncOrderIds } from './utils/orderTracker';
+import { syncOrderIds } from './utils/orderTracker';
 import { WalletManager } from './helpers/walletManager';
-import { connection } from './queue';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
 const BALANCE_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -37,9 +35,9 @@ async function start() {
 
     const provider = getBaseHttpProvider(config);
 
-    // Init wallet manager — generates subwallets on first boot, loads from Redis on restart
+    // Init wallet manager — every signing key is read from the environment
     const walletManager = new WalletManager();
-    await walletManager.init(provider, connection);
+    await walletManager.init(provider);
 
     const fundingSigner = getFundingSigner(config);
     const fundingAddress = await fundingSigner.getAddress();
@@ -64,75 +62,17 @@ async function start() {
         logger.info('dry-run: skipping initial syncOrderIds');
     }
 
-    const app = express();
-    app.get('/healthz', (_req, res) => res.status(200).send("I'm alive"));
-    app.get('/registry', (_req, res) => res.json(CONTRACT_AUTOMATION_REGISTRY));
-
-    app.get('/tx/:hash', async (req, res) => {
-        const hash = req.params.hash;
-
-        try {
-            const tx = await provider.getTransaction(hash);
-            const receipt = await provider.getTransactionReceipt(hash);
-
-            if (!tx && !receipt) {
-                return res.status(404).json({
-                    hash,
-                    error: 'tx_not_found',
-                    message: 'Transaction not found on this RPC',
-                });
-            }
-
-            let revertReason: string | null = null;
-
-            if (receipt && receipt.status === 0 && tx) {
-                try {
-                    await provider.call({
-                        to: tx.to!,
-                        from: tx.from,
-                        data: tx.data,
-                        value: tx.value,
-                    });
-                } catch (err: any) {
-                    revertReason =
-                        err?.reason ||
-                        err?.error?.message ||
-                        err?.data?.message ||
-                        String(err?.message ?? err);
-                }
-            }
-
-            const meta = {
-                pending: !!tx && !receipt,
-                status: receipt?.status ?? null,
-                blockNumber: receipt?.blockNumber ?? null,
-                gasUsed: receipt?.gasUsed ? receipt.gasUsed.toString() : null,
-                effectiveGasPrice: (receipt as any)?.effectiveGasPrice
-                    ? (receipt as any).effectiveGasPrice.toString()
-                    : null,
-                from: tx?.from ?? null,
-                to: tx?.to ?? null,
-                nonce: tx?.nonce ?? null,
-                value: tx?.value ? tx.value.toString() : null,
-            };
-
-            return res.json({ hash, tx, receipt, meta, revertReason });
-        } catch (err: any) {
-            logger.error(`debug tx error for hash= ${hash} ${String(err?.message ?? err)}`);
-            return res.status(500).json({
-                hash,
-                error: 'debug_tx_error',
-                message: String(err?.message ?? err),
-            });
+    // The executor is a worker, not an API. The only thing it serves is the
+    // liveness probe the deploy platform needs; everything an operator might
+    // want to inspect is already in the logs, on Basescan, or in Redis.
+    createServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/healthz') {
+            res.writeHead(200, { 'content-type': 'text/plain' });
+            res.end("I'm alive");
+            return;
         }
-    });
-
-    app.get('/orders', async (_req, res) => {
-        const orders = await getTrackedOrderIds();
-        res.json({ orders });
-    });
-
-    app.listen(PORT, () => logger.info(`http server listening on port: ${PORT}`));
+        res.writeHead(404).end();
+    }).listen(PORT, () => logger.info(`healthz server listening on port: ${PORT}`));
 
     // WS listener
     await startListeners(config);
@@ -144,7 +84,6 @@ async function start() {
     // Workers
     startToggleWorker(config, walletManager);
     startAssignWorker(config, walletManager);
-    // startToggleScheduleWorker(config, walletManager); // disabled — enable when needed
     startOrderSweeperWorker(config, walletManager);
     startOrderScannerWorker(config);
     startCashbackWorker(config, walletManager); // no-op when programme env unset

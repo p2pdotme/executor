@@ -1,7 +1,7 @@
 import { Contract, Wallet, NonceManager } from 'ethers';
 import { logger } from './logger';
 import { sendOnFail, sendOnSuccess } from './alerts';
-import { ContractCallerConfig } from './config';
+import { ExecutorConfig } from './config';
 
 // Alert formatting helpers
 
@@ -38,13 +38,33 @@ function fmtHash(hash: string): string {
     return `[${hash.slice(0, 10)}...${hash.slice(-6)}](https://basescan.org/tx/${hash})`;
 }
 
+/**
+ * Recover the revert reason of a MINED-and-reverted tx. A receipt with status=0
+ * carries no revert data, so we replay the exact call via eth_call at the block
+ * it was included in — a revert there throws with the custom-error selector,
+ * which fmtErr decodes. Fail-open: returns null if the replay can't run.
+ */
+async function decodeMinedRevert(signer: any, tx: any, blockNumber?: number): Promise<string | null> {
+    try {
+        const provider = signer?.provider ?? null;
+        if (!provider || !tx?.to || !tx?.data) return null;
+        await provider.call(
+            { to: tx.to, from: tx.from, data: tx.data, value: tx.value ?? 0n },
+            blockNumber ?? 'latest',
+        );
+        return null; // replay didn't revert (state moved on since inclusion)
+    } catch (err: any) {
+        return fmtErr(err);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function safeSend(
     contract: Contract,
     fnName: string,
     args: any[],
-    config: ContractCallerConfig,
+    config: ExecutorConfig,
     meta: Record<string, any> = {},
     skipPresim = false,
 ): Promise<boolean> {
@@ -168,9 +188,15 @@ export async function safeSend(
             const isNetworkError = !code || code === 'TIMEOUT' || code === 'NETWORK_ERROR' || code === 'SERVER_ERROR';
             const shouldRetry = isCallException || isNetworkError;
 
-            const alert = shouldRetry
-                ? `${fnName} | tx wait error (retrying) | ${m}\n↳ ${fmtHash(tx.hash)}`
-                : `${fnName} | tx reverted | ${m}\n↳ ${fmtHash(tx.hash)}`;
+            let alert: string;
+            if (shouldRetry) {
+                alert = `${fnName} | tx wait error (retrying) | ${m}\n↳ ${fmtHash(tx.hash)}`;
+            } else {
+                const reason =
+                    (data && fmtErr(err)) ||
+                    (await decodeMinedRevert(signer, tx, err.receipt?.blockNumber));
+                alert = `${fnName} | tx reverted | ${m}\n↳ ${fmtHash(tx.hash)}${reason ? `\n↳ ${reason}` : ''}`;
+            }
             await sendOnFail(config, alert);
 
             if (shouldRetry) {
@@ -181,8 +207,9 @@ export async function safeSend(
         }
 
         if (receipt.status !== 1) {
-            logger.error(`safeSend: tx reverted fn=${fnName} hash=${tx.hash} status=${receipt.status} meta=${JSON.stringify(meta)}`);
-            const alert = `${fnName} | tx reverted | ${m}\n↳ ${fmtHash(tx.hash)}`;
+            const reason = await decodeMinedRevert(signer, tx, receipt.blockNumber);
+            logger.error(`safeSend: tx reverted fn=${fnName} hash=${tx.hash} status=${receipt.status} reason=${reason ?? 'unknown'} meta=${JSON.stringify(meta)}`);
+            const alert = `${fnName} | tx reverted | ${m}\n↳ ${fmtHash(tx.hash)}${reason ? `\n↳ ${reason}` : ''}`;
             await sendOnFail(config, alert);
             return false;
         }

@@ -46,14 +46,6 @@ const DEFAULT_CASHBACK_BPS_BY_CURRENCY: Record<string, number> = {
     MEX: 100,
 };
 
-// Backward-compat aliases — all workers/helpers use ExecutorConfig under the hood
-export type CommonConfig = ExecutorConfig;
-export type ContractCallerConfig = ExecutorConfig;
-export type ToggleConfig = ExecutorConfig;
-export type AssignConfig = ExecutorConfig;
-export type ToggleScheduleConfig = ExecutorConfig;
-export type OrderSweeperConfig = ExecutorConfig;
-
 function requireEnv(name: string): string {
     const v = process.env[name];
     if (!v) throw new Error(`Missing env: ${name}`);
@@ -144,10 +136,3 @@ export function loadExecutorConfig(): ExecutorConfig {
         insuranceDiamondAddress,
     };
 }
-
-// Old loader names kept so existing imports compile without changes
-export const loadCommonConfig = loadExecutorConfig;
-export const loadToggleConfig = loadExecutorConfig;
-export const loadAssignConfig = loadExecutorConfig;
-export const loadToggleScheduleConfig = loadExecutorConfig;
-export const loadOrderSweeperConfig = loadExecutorConfig;

@@ -1,12 +1,11 @@
 import { Queue, Job } from 'bullmq';
 import IORedis from 'ioredis';
-import { AssignConfig, ToggleConfig } from '../helpers/config';
+import { ExecutorConfig } from '../helpers/config';
 import { ContractJobData, SettleClaimJobData } from './types';
 import { logger } from '../helpers/logger';
 
 export const TOGGLE_QUEUE_NAME = 'toggle-calls';
 export const ASSIGN_QUEUE_NAME = 'assign-calls';
-export const TOGGLE_SCHEDULE_QUEUE_NAME = 'toggle-schedule-calls';
 export const ORDER_SWEEPER_QUEUE_NAME = 'order-sweeper-calls';
 export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 // B2B cashback programme — see queue/workers/cashbackWorker.ts.
@@ -31,7 +30,6 @@ export const connection = new IORedis(REDIS_URL, {
 // separate queues per wallet / responsibility
 export let toggleQueue: Queue<ContractJobData>;
 export let assignQueue: Queue<ContractJobData>;
-export let toggleScheduleQueue: Queue<ContractJobData>;
 export let orderSweeperQueue: Queue<any>;
 export let orderScannerQueue: Queue<any>;
 export let cashbackQueue: Queue<ContractJobData>;
@@ -39,7 +37,7 @@ export let dailyKeeperQueue: Queue<any>;
 export let settleClaimQueue: Queue<SettleClaimJobData>;
 export let settleClaimScannerQueue: Queue<any>;
 
-export function initToggleQueue(_config?: ToggleConfig) {
+export function initToggleQueue(_config?: ExecutorConfig) {
     if (!toggleQueue) {
         toggleQueue = new Queue<ContractJobData>(TOGGLE_QUEUE_NAME, {
             connection,
@@ -56,7 +54,7 @@ export function initToggleQueue(_config?: ToggleConfig) {
     return toggleQueue;
 }
 
-export function initAssignQueue(_config?: AssignConfig) {
+export function initAssignQueue(_config?: ExecutorConfig) {
     if (!assignQueue) {
         assignQueue = new Queue<ContractJobData>(ASSIGN_QUEUE_NAME, {
             connection,
@@ -71,21 +69,6 @@ export function initAssignQueue(_config?: AssignConfig) {
     }
 
     return assignQueue;
-}
-
-export function initToggleScheduleQueue() {
-    if (!toggleScheduleQueue) {
-        toggleScheduleQueue = new Queue<ContractJobData>(TOGGLE_SCHEDULE_QUEUE_NAME, {
-            connection,
-            defaultJobOptions: {
-                removeOnComplete: true,
-                attempts: 3,
-                backoff: { type: 'exponential', delay: 1000 },
-            },
-        });
-        logger.info(`queue: ${TOGGLE_SCHEDULE_QUEUE_NAME} initialised`);
-    }
-    return toggleScheduleQueue;
 }
 
 export function initOrderSweeperQueue() {
@@ -197,7 +180,7 @@ export function initOrderScannerQueue() {
 
 // enqueue helpers
 export async function addToggleJob(
-    config: ToggleConfig,
+    config: ExecutorConfig,
     name: string,
     data: ContractJobData,
     opts?: { delayMs?: number; jobId?: string },
@@ -222,7 +205,7 @@ export async function addToggleJob(
 }
 
 export async function addAssignJob(
-    config: AssignConfig,
+    config: ExecutorConfig,
     name: string, // expected: 'AssignMerchants' | 'GetOrdersById'
     data: ContractJobData,
     opts?: { delayMs?: number; jobId?: string },

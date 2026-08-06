@@ -2,7 +2,7 @@ import { connection } from '../queue';
 import { logger } from '../helpers/logger';
 import { getBaseHttpProvider } from '../helpers/provider';
 import { getPendingOrdersFromLogs } from './fetchPendingOrders';
-import { CommonConfig } from '../helpers/config';
+import { ExecutorConfig } from '../helpers/config';
 
 const KEY = 'autocancel:orders';
 
@@ -33,7 +33,7 @@ export async function trackOrderIds(orderIds: string[]) {
  * - unions them into the tracked set (does NOT clear existing)
  */
 export async function syncOrderIds(
-    config: CommonConfig,
+    config: ExecutorConfig,
     lookbackBlocks: number,
 ): Promise<void> {
     if (lookbackBlocks <= 0) return;
