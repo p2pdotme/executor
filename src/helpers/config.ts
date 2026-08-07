@@ -27,6 +27,13 @@ export type ExecutorConfig = {
     // uses its bps instead of the default cashbackBps. Resolved at order
     // completion time from the order's `currency` field.
     cashbackBpsByCurrency: Record<string, number>;
+    // Insurance Diamond address. When empty the whole insurance settlement
+    // keeper (ClaimApproved listener + reconciliation scanner + settle worker)
+    // is disabled, so the executor stays usable for deploys without insurance.
+    // When set, the ClaimApproved WS listener schedules a delayed settleClaim
+    // job at each claim's payoutEligibleAt, and the scanner reconciles any
+    // missed/overdue claims via the subgraph.
+    insuranceDiamondAddress: string;
 };
 
 // Built-in per-currency cashback overrides. These ship as defaults so the
@@ -107,6 +114,11 @@ export function loadExecutorConfig(): ExecutorConfig {
         process.env.CASHBACK_BPS_BY_CURRENCY ?? '',
     );
     const subgraphUrl = (process.env.SUBGRAPH_URL ?? '').trim();
+    // Optional — empty disables the insurance settlement keeper entirely.
+    const insuranceDiamondAddress = (process.env.INSURANCE_DIAMOND_ADDRESS ?? '').trim();
+    if (insuranceDiamondAddress && !/^0x[0-9a-fA-F]{40}$/.test(insuranceDiamondAddress)) {
+        throw new Error('INSURANCE_DIAMOND_ADDRESS must be a 0x-prefixed 20-byte address');
+    }
     return {
         alchemyApiKey,
         diamondAddress,
@@ -121,5 +133,6 @@ export function loadExecutorConfig(): ExecutorConfig {
         cashbackIntegratorAddress,
         cashbackBps,
         cashbackBpsByCurrency,
+        insuranceDiamondAddress,
     };
 }
