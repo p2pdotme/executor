@@ -27,8 +27,12 @@ export type IssueCashbackCreditJobData = {
 };
 
 // SettleClaim job payload — the insurance settlement keeper (see
-// queue/workers/settleClaimWorker.ts) settles one approved claim per job once
-// its payout delay has elapsed.
+// queue/workers/settleClaimJob.ts) settles one approved claim per job once its
+// payout delay has elapsed. These jobs run on the DAILY KEEPER queue so the
+// shared Keeper wallet keeps a single consumer; the name distinguishes them from
+// that queue's own 'DailyKeeper' / 'DailyKeeperStartup' jobs.
+export const SETTLE_CLAIM_JOB_NAME = 'SettleClaim';
+
 export type SettleClaimJobData = {
     claimId: string; // uint256 claimId as a decimal string
 };

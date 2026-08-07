@@ -10,7 +10,6 @@ import { startOrderSweeperWorker } from './queue/workers/orderSweeperWorker';
 import { startOrderScannerWorker } from './queue/workers/orderScannerWorker';
 import { startCashbackWorker } from './queue/workers/cashbackWorker';
 import { startDailyKeeperWorker } from './queue/workers/dailyKeeperWorker';
-import { startSettleClaimWorker } from './queue/workers/settleClaimWorker';
 import { startSettleClaimScannerWorker } from './queue/workers/settleClaimScannerWorker';
 import { logger } from './helpers/logger';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
@@ -87,10 +86,10 @@ async function start() {
     startOrderSweeperWorker(config, walletManager);
     startOrderScannerWorker(config);
     startCashbackWorker(config, walletManager); // no-op when programme env unset
+    // Also consumes the insurance 'SettleClaim' jobs — same queue, same Keeper
+    // wallet, one consumer. No-ops on settles when INSURANCE_DIAMOND_ADDRESS is unset.
     startDailyKeeperWorker(config, walletManager);
-    // Insurance settlement keeper — both no-op when INSURANCE_DIAMOND_ADDRESS unset.
-    startSettleClaimWorker(config, walletManager);
-    startSettleClaimScannerWorker(config);
+    startSettleClaimScannerWorker(config); // no-op when INSURANCE_DIAMOND_ADDRESS unset
     logger.info('workers started');
 }
 

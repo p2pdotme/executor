@@ -77,11 +77,12 @@ async function fetchDueClaims(url: string, nowSec: number): Promise<string[]> {
 }
 
 // Reconciliation safety net for the ClaimApproved WS listener: enqueues any
-// approved-and-overdue claim into the settle queue. Enqueue is idempotent
+// approved-and-overdue claim onto the daily-keeper queue. Enqueue is idempotent
 // (jobId=settle-<claimId>): a claim already scheduled by the WS listener or
 // still in-flight is deduped, so this can run as often as we like without
-// double-settling. The actual settleClaim tx (and its presim gating) happens in
-// settleClaimWorker — this worker only enqueues.
+// double-settling. This worker sends NO transactions — it only enqueues, so it
+// touches no wallet and is safe to run on its own queue concurrently with a
+// settle. The settleClaim tx (and its presim gating) happens in settleClaimJob.
 export function startSettleClaimScannerWorker(config: ExecutorConfig) {
     if (!config.insuranceDiamondAddress) {
         logger.info('settle-scanner: INSURANCE_DIAMOND_ADDRESS unset — reconciliation scanner disabled');

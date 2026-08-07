@@ -1,4 +1,4 @@
-import { Worker } from 'bullmq';
+import { Worker, Job } from 'bullmq';
 import { Contract, getAddress, ZeroAddress } from 'ethers';
 import { ExecutorConfig } from '../../helpers/config';
 import { logger } from '../../helpers/logger';
@@ -7,9 +7,14 @@ import { DIAMOND_ABI } from '../../helpers/abi';
 import { safeSend } from '../../helpers/safeSend';
 import { sendOnFail, sendOnSuccess } from '../../helpers/alerts';
 import { WalletManager, WalletRole } from '../../helpers/walletManager';
+import { createSettleClaimHandler } from './settleClaimJob';
+import { SettleClaimJobData, SETTLE_CLAIM_JOB_NAME } from '../types';
 
 // Subgraph fan-out (one orders query per active merchant) plus the on-chain
-// read validation can take a while, so give the daily job a long lock.
+// read validation can take a while, so give the daily job a long lock. Settle
+// jobs share this queue and so inherit the lock; they finish in seconds, and the
+// only cost of the long lock is how long a settle stays claimed if the process
+// dies mid-tx — which is exactly when we do NOT want a second instance retrying.
 const LOCK_DURATION_MS = 30 * 60_000; // 30 min
 const SECS_PER_DAY = 86_400;
 const MERCHANT_INACTIVITY_PERIOD = 30 * SECS_PER_DAY; // mirrors the on-chain const
@@ -288,15 +293,36 @@ async function runBlacklistInactive(diamond: Contract, config: ExecutorConfig): 
     return `job2: submitted ${submitted}/${list.length}`;
 }
 
+// Sole consumer of the Keeper wallet. Two job types share this queue:
+//   'DailyKeeper' / 'DailyKeeperStartup' — the once-a-day run below.
+//   'SettleClaim'                        — one insurance settleClaim per job.
+// They are NOT split across queues on purpose: both sign with the same Keeper
+// NonceManager, and safeSend's signer.reset() on a tx timeout clears the delta
+// for whoever else is mid-flight. concurrency:1 on ONE queue makes the Keeper
+// wallet strictly single-consumer, so a settle can never interleave with the
+// daily run's chunked approveUnstakeBatch loop. Settles are not latency-
+// sensitive (their 48h payout delay has already elapsed), so queueing behind a
+// long daily run is fine.
 export function startDailyKeeperWorker(config: ExecutorConfig, walletManager: WalletManager) {
     const signer = walletManager.getSigner(WalletRole.Keeper);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);
+    // null when INSURANCE_DIAMOND_ADDRESS is unset — nothing enqueues settle
+    // jobs in that case, so the branch below is unreachable.
+    const settleClaim = createSettleClaimHandler(config, walletManager);
 
     initDailyKeeperQueue();
 
     const worker = new Worker(
         DAILY_KEEPER_QUEUE_NAME,
-        async (_job) => {
+        async (job) => {
+            if (job.name === SETTLE_CLAIM_JOB_NAME) {
+                if (!settleClaim) {
+                    logger.warn(`keeper-queue: settle job ${job.id} received but the insurance keeper is disabled — dropping`);
+                    return;
+                }
+                return settleClaim(job as Job<SettleClaimJobData>);
+            }
+
             logger.info('⏰ daily-keeper: run starting');
 
             // Capability gate: approveUnstakeBatch, blacklistInactiveMerchants and
@@ -324,12 +350,19 @@ export function startDailyKeeperWorker(config: ExecutorConfig, walletManager: Wa
         },
     );
 
-    worker.on('error', (err) => logger.error(`❌ daily-keeper: worker error: ${err?.message}`));
-    worker.on('completed', (job) => logger.info(`✅ daily-keeper: completed jobId=${job.id} ${job.name}`));
+    worker.on('error', (err) => logger.error(`❌ keeper-queue: worker error: ${err?.message}`));
+    worker.on('completed', (job) => logger.info(`✅ keeper-queue: completed jobId=${job.id} ${job.name}`));
     worker.on('failed', async (job, err) => {
+        // Settle jobs alert from inside their own handler (with per-claim
+        // suppression), so re-alerting here would double-ping Discord and
+        // mislabel the failure as a daily keeper run.
+        if (job?.name === SETTLE_CLAIM_JOB_NAME) {
+            logger.warn(`❌ keeper-queue: settle failed jobId=${job?.id} claimId=${(job?.data as SettleClaimJobData)?.claimId}: ${err?.message}`);
+            return;
+        }
         logger.warn(`❌ daily-keeper: failed jobId=${job?.id} ${job?.name}: ${err?.message}`);
         await sendOnFail(config, `⏰ **Daily keeper run failed**\n↳ ${err?.message ?? err}`).catch(() => {});
     });
 
-    logger.info('⏰ daily-keeper: started');
+    logger.info('⏰ keeper-queue: started (daily keeper + insurance settle)');
 }
