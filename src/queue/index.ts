@@ -10,11 +10,11 @@ export const ORDER_SWEEPER_QUEUE_NAME = 'order-sweeper-calls';
 export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 // B2B cashback programme — see queue/workers/cashbackWorker.ts.
 export const CASHBACK_QUEUE_NAME = 'cashback-calls';
-// Everything signed by the Keeper wallet. Carries BOTH the once-a-day keeper run
+// Everything signed by the Keeper wallet. Carries BOTH the 3-hourly keeper run
 // ('DailyKeeper'/'DailyKeeperStartup') and the insurance settlement jobs
 // ('SettleClaim'). Deliberately one queue: its concurrency:1 worker is the only
 // consumer of the shared Keeper NonceManager, so a settle can never interleave
-// with the daily run and trip safeSend's signer.reset(). See dailyKeeperWorker.ts.
+// with a keeper run and trip safeSend's signer.reset(). See dailyKeeperWorker.ts.
 export const DAILY_KEEPER_QUEUE_NAME = 'daily-keeper-calls';
 // Subgraph reconciliation tick that enqueues overdue/missed claims onto the
 // keeper queue. Read-only (no tx, no wallet), so it keeps its own queue and can

@@ -294,15 +294,15 @@ async function runBlacklistInactive(diamond: Contract, config: ExecutorConfig): 
 }
 
 // Sole consumer of the Keeper wallet. Two job types share this queue:
-//   'DailyKeeper' / 'DailyKeeperStartup' — the once-a-day run below.
+//   'DailyKeeper' / 'DailyKeeperStartup' — the 3-hourly run below.
 //   'SettleClaim'                        — one insurance settleClaim per job.
 // They are NOT split across queues on purpose: both sign with the same Keeper
 // NonceManager, and safeSend's signer.reset() on a tx timeout clears the delta
 // for whoever else is mid-flight. concurrency:1 on ONE queue makes the Keeper
 // wallet strictly single-consumer, so a settle can never interleave with the
-// daily run's chunked approveUnstakeBatch loop. Settles are not latency-
+// keeper run's chunked approveUnstakeBatch loop. Settles are not latency-
 // sensitive (their 48h payout delay has already elapsed), so queueing behind a
-// long daily run is fine.
+// keeper run is fine.
 export function startDailyKeeperWorker(config: ExecutorConfig, walletManager: WalletManager) {
     const signer = walletManager.getSigner(WalletRole.Keeper);
     const diamond = new Contract(config.diamondAddress, DIAMOND_ABI, signer);

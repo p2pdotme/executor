@@ -4,10 +4,15 @@ import { logger } from '../helpers/logger';
 
 // Reconciliation tick for the insurance settlement keeper — enqueues any
 // approved-and-overdue claim (missed WS events, approvals before boot, delayed
-// jobs lost on a Redis flush) into the settle queue. Interval configurable via
-// SETTLE_SCANNER_INTERVAL_MIN (default 15 min). Enqueue is idempotent so a
-// tighter interval is safe. A one-shot run at startup reconciles immediately on
-// a fresh deploy instead of waiting for the first interval.
+// jobs lost on a Redis flush) into the keeper queue. Interval configurable via
+// SETTLE_SCANNER_INTERVAL_MIN (default 180 min = 3h, matching the keeper run).
+//
+// This is only the FALLBACK path: the normal path is the ClaimApproved listener,
+// which schedules a delayed job for the exact maturity time, so a 3h scan
+// interval does not add 3h to a typical settle — it only bounds how long a
+// claim can sit if its WS event was missed. Enqueue is idempotent, so tightening
+// the interval is safe if that bound ever needs to be shorter. A one-shot run at
+// startup reconciles immediately on a fresh deploy.
 export async function startSettleClaimScannerSchedule(config: ExecutorConfig) {
     // Must be gated like the listener and both workers, otherwise a deploy
     // without insurance keeps promoting scan jobs onto a queue nobody consumes
@@ -18,8 +23,8 @@ export async function startSettleClaimScannerSchedule(config: ExecutorConfig) {
     }
 
     const queue = initSettleClaimScannerQueue();
-    const min = Number(process.env.SETTLE_SCANNER_INTERVAL_MIN ?? '15');
-    const intervalMin = Number.isInteger(min) && min >= 1 ? min : 15;
+    const min = Number(process.env.SETTLE_SCANNER_INTERVAL_MIN ?? '180');
+    const intervalMin = Number.isInteger(min) && min >= 1 ? min : 180;
     const everyMs = intervalMin * 60 * 1000;
 
     // BullMQ's repeat key embeds `every`, so changing SETTLE_SCANNER_INTERVAL_MIN
