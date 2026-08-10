@@ -2,16 +2,18 @@ import { Contract, ethers, Interface } from 'ethers';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
 
-export const currencyMap: Record<string, string> = {
-    [ethers.encodeBytes32String("INR")]: "Inr",
-    [ethers.encodeBytes32String("IDR")]: "Idr",
-    [ethers.encodeBytes32String("BRL")]: "Brl",
-    [ethers.encodeBytes32String("ARS")]: "Ars",
-    [ethers.encodeBytes32String("MEX")]: "Mex",
-    [ethers.encodeBytes32String("VEN")]: "Ven",
-    [ethers.encodeBytes32String("ECU")]: "Ecu",
-    [ethers.encodeBytes32String("PEN")]: "Pen",
-};
+/**
+ * bytes32 currency → its ASCII code, for logs only. Decoding beats a lookup
+ * table: a circle created for a new currency prints its real code instead of
+ * a raw 32-byte word until someone remembers to extend a list.
+ */
+export function currencyName(currencyBytes32: string): string {
+    try {
+        return ethers.decodeBytes32String(currencyBytes32) || currencyBytes32;
+    } catch {
+        return currencyBytes32;
+    }
+}
 
 const MERCHANT_ASSIGNED_EVENT = 'MerchantAssignedNewOrder';
 

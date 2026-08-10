@@ -11,6 +11,8 @@ export type ExecutorConfig = {
     assignDelayInSeconds: number;
     // Goldsky subgraph endpoint used by the daily keeper to enumerate
     // unstake-requested + inactive merchants. Defaults to the prod endpoint.
+    // It also backs the circle registry the keeper sweeps (helpers/circles.ts),
+    // so the whole job has exactly one external dependency.
     subgraphUrl: string;
     // B2B cashback programme — credits a bps cut of every completed non-B2B
     // BUY or SELL back to the order's user (buyer for BUY, seller for SELL)
