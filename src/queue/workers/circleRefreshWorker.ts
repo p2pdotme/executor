@@ -5,7 +5,8 @@ import { CIRCLE_REFRESH_QUEUE_NAME, initCircleRefreshQueue, connection } from '.
 import { fetchCircleCurrencies, readCachedCurrencies } from '../../helpers/circles';
 import { sendOnSuccess } from '../../helpers/alerts';
 
-// A single authed GET against the internal network — nothing here can take long.
+// One GraphQL query plus a Redis write; the fetch itself is capped at 10s in
+// helpers/circles.ts, so nothing here can hold the lock for long.
 const LOCK_DURATION_MS = 60_000;
 
 /**
@@ -13,7 +14,7 @@ const LOCK_DURATION_MS = 60_000;
  *
  * The daily keeper already fetches the registry live at the start of each run,
  * so this is not what makes a new currency get swept. What it buys is that the
- * fallback copy in Redis is never more than an hour stale — if the notifier
+ * fallback copy in Redis is never more than an hour stale — if the subgraph
  * happens to be down at 03:00 UTC, the keeper falls back to a list from within
  * the hour rather than one from the previous day — and that a newly launched
  * currency is announced to ops when it appears, instead of being noticed a day
@@ -45,6 +46,13 @@ export function startCircleRefreshWorker(config: ExecutorConfig) {
                     config,
                     `Circle registry changed: ${parts.join(' ')} — now tracking ${after.length} currencies (${after.join(', ')})`,
                 ).catch(() => undefined);
+            } else if (!before) {
+                // First run after a deploy that found no cache. Not a change, but
+                // worth one INFO line — it is the only confirmation that the
+                // keeper's fallback copy exists at all.
+                logger.info(
+                    `circle-refresh: registry cached — ${after.length} currencies [${after.join(', ')}]`,
+                );
             } else {
                 logger.debug(`circle-refresh: unchanged (${after.length} currencies)`);
             }

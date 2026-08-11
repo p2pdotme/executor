@@ -145,7 +145,7 @@ export function initCircleRefreshQueue() {
                 removeOnFail: { count: 100 },
                 // One retry only. A refresh that fails leaves the previous list
                 // in Redis and the next tick is an hour away, so there is no
-                // point grinding on a notifier that is down.
+                // point grinding on a subgraph that is down.
                 attempts: 2,
                 backoff: { type: 'exponential', delay: 5000 },
             },
