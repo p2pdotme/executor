@@ -1,6 +1,7 @@
 import { Worker } from 'bullmq';
 import { Contract, getAddress, ZeroAddress } from 'ethers';
 import { ExecutorConfig } from '../../helpers/config';
+import { fetchCircleCurrencies } from '../../helpers/circles';
 import { logger } from '../../helpers/logger';
 import { DAILY_KEEPER_QUEUE_NAME, initDailyKeeperQueue, connection } from '../index';
 import { DIAMOND_ABI } from '../../helpers/abi';
@@ -13,8 +14,6 @@ import { WalletManager, WalletRole } from '../../helpers/walletManager';
 const LOCK_DURATION_MS = 30 * 60_000; // 30 min
 const SECS_PER_DAY = 86_400;
 const MERCHANT_INACTIVITY_PERIOD = 30 * SECS_PER_DAY; // mirrors the on-chain const
-// On-chain currency codes (NOTE: "MEX"/"VEN", not MXN/VES).
-const CURRENCIES = ['INR', 'BRL', 'ARS', 'VEN', 'IDR', 'NGN', 'COP', 'MEX', 'USD', 'EUR', 'ECU', 'PEN'];
 const PAGE = 500; // subgraph page size
 const TX_CHUNK = 50; // merchants per on-chain tx
 const READ_CHUNK = 20; // concurrent view-call / subgraph fan-out
@@ -239,8 +238,15 @@ async function runBlacklistInactive(diamond: Contract, config: ExecutorConfig): 
     const inactivityCutoff = now - MERCHANT_INACTIVITY_PERIOD;
     const graceCutoff = now - MERCHANT_INACTIVITY_PERIOD; // reactivated within 30d → still in grace
 
+    // Pulled fresh every run, so a circle created for a new currency is swept
+    // within 24h with no code or config change here. Throws rather than
+    // returning a subset — silently skipping whole currencies is worse than
+    // failing the job and alerting.
+    const currencies = await fetchCircleCurrencies(config);
+    logger.info(`daily-keeper[job2]: currencies=${currencies.length} [${currencies.join(', ')}]`);
+
     const targets = new Set<string>();
-    for (const ccy of CURRENCIES) {
+    for (const ccy of currencies) {
         const ccyBytes = ccyToBytes32(ccy);
         const merchants = await fetchActiveMerchants(config.subgraphUrl, ccyBytes);
         if (merchants.length === 0) continue;

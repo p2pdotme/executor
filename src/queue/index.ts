@@ -12,6 +12,8 @@ export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 export const CASHBACK_QUEUE_NAME = 'cashback-calls';
 // Daily permissionless keeper — see queue/workers/dailyKeeperWorker.ts.
 export const DAILY_KEEPER_QUEUE_NAME = 'daily-keeper-calls';
+// Hourly circle-registry refresh — see queue/workers/circleRefreshWorker.ts.
+export const CIRCLE_REFRESH_QUEUE_NAME = 'circle-refresh-calls';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
 export const connection = new IORedis(REDIS_URL, {
@@ -28,6 +30,7 @@ export let orderSweeperQueue: Queue<any>;
 export let orderScannerQueue: Queue<any>;
 export let cashbackQueue: Queue<ContractJobData>;
 export let dailyKeeperQueue: Queue<any>;
+export let circleRefreshQueue: Queue<any>;
 
 export function initToggleQueue(_config?: ExecutorConfig) {
     if (!toggleQueue) {
@@ -131,6 +134,25 @@ export function initOrderScannerQueue() {
         logger.info(`queue: ${ORDER_SCANNER_QUEUE_NAME} initialised`);
     }
     return orderScannerQueue;
+}
+
+export function initCircleRefreshQueue() {
+    if (!circleRefreshQueue) {
+        circleRefreshQueue = new Queue<any>(CIRCLE_REFRESH_QUEUE_NAME, {
+            connection,
+            defaultJobOptions: {
+                removeOnComplete: true,
+                removeOnFail: { count: 100 },
+                // One retry only. A refresh that fails leaves the previous list
+                // in Redis and the next tick is an hour away, so there is no
+                // point grinding on a subgraph that is down.
+                attempts: 2,
+                backoff: { type: 'exponential', delay: 5000 },
+            },
+        });
+        logger.info(`queue: ${CIRCLE_REFRESH_QUEUE_NAME} initialised`);
+    }
+    return circleRefreshQueue;
 }
 
 
