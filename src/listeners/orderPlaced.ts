@@ -4,7 +4,7 @@ import { getBaseWsProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
 import { addToggleJob, addAssignJob } from '../queue';
-import { currencyMap, resolveOrderFromEventOrChain } from './utils';
+import { currencyName, resolveOrderFromEventOrChain } from './utils';
 import { trackOrderId } from '../utils/orderTracker';
 import { sendDiscordAlert } from '../helpers/discord';
 
@@ -56,11 +56,11 @@ export async function attachOrderPlacedListener(config: ExecutorConfig) {
                 logger.debug(`OrderPlaced: tracking orderId=${orderIdStr} for autocancel`);
 
                 const currencyStr = String(order.currency);
-                const currencyName = currencyMap[currencyStr] ?? currencyStr;
+                const ccyName = currencyName(currencyStr);
                 const circleId = String(order.circleId);
 
                 logger.info(
-                    `OrderPlaced: orderId=${orderIdStr} circleId=${circleId} currency=${currencyName} txHash=${txHash}`,
+                    `OrderPlaced: orderId=${orderIdStr} circleId=${circleId} currency=${ccyName} txHash=${txHash}`,
                 );
 
                 await addToggleJob(

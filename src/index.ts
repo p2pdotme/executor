@@ -10,6 +10,7 @@ import { startOrderSweeperWorker } from './queue/workers/orderSweeperWorker';
 import { startOrderScannerWorker } from './queue/workers/orderScannerWorker';
 import { startCashbackWorker } from './queue/workers/cashbackWorker';
 import { startDailyKeeperWorker } from './queue/workers/dailyKeeperWorker';
+import { startCircleRefreshWorker } from './queue/workers/circleRefreshWorker';
 import { logger } from './helpers/logger';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
 import { startListeners } from './listeners';
@@ -86,6 +87,7 @@ async function start() {
     startOrderScannerWorker(config);
     startCashbackWorker(config, walletManager); // no-op when programme env unset
     startDailyKeeperWorker(config, walletManager);
+    startCircleRefreshWorker(config);
     logger.info('workers started');
 }
 
