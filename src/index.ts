@@ -11,6 +11,7 @@ import { startOrderScannerWorker } from './queue/workers/orderScannerWorker';
 import { startCashbackWorker } from './queue/workers/cashbackWorker';
 import { startDailyKeeperWorker } from './queue/workers/dailyKeeperWorker';
 import { startCircleRefreshWorker } from './queue/workers/circleRefreshWorker';
+import { startSettleClaimScannerWorker } from './queue/workers/settleClaimScannerWorker';
 import { logger } from './helpers/logger';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
 import { startListeners } from './listeners';
@@ -77,7 +78,7 @@ async function start() {
     await startListeners(config);
     logger.info('listeners started');
 
-    await startSchedulers();
+    await startSchedulers(config);
     logger.info('schedulers started');
 
     // Workers
@@ -86,8 +87,11 @@ async function start() {
     startOrderSweeperWorker(config, walletManager);
     startOrderScannerWorker(config);
     startCashbackWorker(config, walletManager); // no-op when programme env unset
+    // Also consumes the insurance 'SettleClaim' jobs — same queue, same Keeper
+    // wallet, one consumer. No-ops on settles when INSURANCE_DIAMOND_ADDRESS is unset.
     startDailyKeeperWorker(config, walletManager);
     startCircleRefreshWorker(config);
+    startSettleClaimScannerWorker(config); // no-op when INSURANCE_DIAMOND_ADDRESS unset
     logger.info('workers started');
 }
 
