@@ -14,6 +14,8 @@ import { startCircleRefreshWorker } from './queue/workers/circleRefreshWorker';
 import { startSettleClaimScannerWorker } from './queue/workers/settleClaimScannerWorker';
 import { startPrizerailEntryWorker } from './queue/workers/prizerailEntryWorker';
 import { startPrizerailPayoutScannerWorker } from './queue/workers/prizerailPayoutScannerWorker';
+import { startPrizerailPayoutWorker } from './queue/workers/prizerailPayoutWorker';
+import { getPrizerailStore } from './prizerail/db';
 import { logger } from './helpers/logger';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
 import { startListeners } from './listeners';
@@ -76,6 +78,13 @@ async function start() {
         res.writeHead(404).end();
     }).listen(PORT, () => logger.info(`healthz server listening on port: ${PORT}`));
 
+    // Prizerail ledger lives in Postgres; the schema is idempotent and applied
+    // on every boot so a fresh database needs no manual migration step.
+    if (config.prizerail) {
+        await getPrizerailStore(config).applySchema();
+        logger.info('prizerail: postgres schema applied');
+    }
+
     // WS listener
     await startListeners(config);
     logger.info('listeners started');
@@ -95,7 +104,8 @@ async function start() {
     startCircleRefreshWorker(config);
     startSettleClaimScannerWorker(config); // no-op when INSURANCE_DIAMOND_ADDRESS unset
     startPrizerailEntryWorker(config); // no-op when PRIZERAIL_API_KEY unset
-    startPrizerailPayoutScannerWorker(config); // no-op unless PRIZERAIL_PAYOUT_SCAN_ENABLED=true
+    startPrizerailPayoutScannerWorker(config); // no-op when PRIZERAIL_API_KEY unset
+    await startPrizerailPayoutWorker(config, walletManager); // no-op unless PRIZE_PAYOUT_EXECUTOR set
     logger.info('workers started');
 }
 

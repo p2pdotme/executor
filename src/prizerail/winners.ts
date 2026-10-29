@@ -1,9 +1,10 @@
 import type { PrizerailDrawing } from './types';
 
-// Where a winner's payout stands from OUR side. Prizerail pays the prize USDC
-// to the campaign wallet; paying the user is our job and is not automated
-// yet (see README → Prizerail). Every record therefore starts pending_manual.
-export type WinnerPayoutStatus = 'pending_manual' | 'unresolved_entrant';
+import type { PayoutStatus } from './payout';
+
+// The planned status at discovery time; the ledger refines it (held, paying,
+// paid, …) — see prizerail/payout.ts.
+export type WinnerPayoutStatus = Extract<PayoutStatus, 'pending' | 'unresolved_entrant'>;
 
 export type WinnerRecord = {
     drawingId: string;
@@ -49,51 +50,10 @@ export function planWinnerRecords(
             wallet,
             amountCents: w.amountCents,
             heldForManualPayout: w.heldForManualPayout,
-            payoutStatus: wallet ? 'pending_manual' : 'unresolved_entrant',
+            payoutStatus: wallet ? 'pending' : 'unresolved_entrant',
             recordedAt,
         };
     });
-}
-
-// Redis hashes hold strings only; null becomes ''.
-export function flattenRecord(record: WinnerRecord): Record<string, string> {
-    return Object.fromEntries(
-        Object.entries(record).map(([k, v]) => [k, v === null ? '' : String(v)]),
-    );
-}
-
-export type MergeResult = {
-    // Fields to write back, or null when storage is already current.
-    patch: Record<string, string> | null;
-    // The record as it stands after the merge (what to alert on).
-    effective: WinnerRecord;
-};
-
-/**
- * Pure: reconcile a stored winner record with a freshly planned one. Only two
- * things may change after first write — the drawing's status (settled →
- * paid) and a wallet that was unresolved but can be resolved now. A stored
- * wallet is never cleared, and the original recordedAt is kept.
- */
-export function mergeWinnerRecord(existing: Record<string, string>, planned: WinnerRecord): MergeResult {
-    const storedWallet = existing.wallet ? existing.wallet : null;
-    const wallet = storedWallet ?? planned.wallet;
-    const payoutStatus: WinnerPayoutStatus = wallet ? 'pending_manual' : 'unresolved_entrant';
-    const recordedAt = Number.isFinite(Number(existing.recordedAt)) && existing.recordedAt !== ''
-        ? Number(existing.recordedAt)
-        : planned.recordedAt;
-
-    const patch: Record<string, string> = {};
-    if (existing.drawingStatus !== planned.drawingStatus) patch.drawingStatus = planned.drawingStatus;
-    if (!storedWallet && wallet) {
-        patch.wallet = wallet;
-        patch.payoutStatus = payoutStatus;
-    }
-
-    return {
-        patch: Object.keys(patch).length ? patch : null,
-        effective: { ...planned, wallet, payoutStatus, recordedAt },
-    };
 }
 
 export function formatUsd(cents: number): string {
@@ -122,7 +82,6 @@ export function formatWinnersAlert(
         `🎟️ Prizerail ${campaignSlug} draw ${label} (${drawing.kind}, ${drawing.status}) — ${records.length} winner(s), ${formatUsd(total)} total`,
         `drawAt: ${drawing.drawAt} · drawingId: ${drawing.id}`,
         ...lines,
-        'Payouts to users are manual until the payout rail is enabled.',
     ].join('\n');
 }
 

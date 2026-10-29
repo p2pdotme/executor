@@ -67,6 +67,10 @@ export async function safeSend(
     config: ExecutorConfig,
     meta: Record<string, any> = {},
     skipPresim = false,
+    // onSent fires once the tx hash is known, BEFORE waiting for the receipt,
+    // so a caller can persist the hash and reconcile from the chain if the
+    // process dies mid-wait (see prizerailPayoutWorker).
+    hooks: { onSent?: (txHash: string) => Promise<void> } = {},
 ): Promise<boolean> {
     const isDryRun = config.dryRun;
     const signer = contract.runner as Wallet | NonceManager | undefined;
@@ -136,6 +140,13 @@ export async function safeSend(
         }
 
         logger.info(`safeSend: tx sent fn=${fnName} hash=${tx.hash} meta=${JSON.stringify(meta)}`);
+        if (hooks.onSent) {
+            try {
+                await hooks.onSent(tx.hash);
+            } catch (hookErr: any) {
+                logger.error(`safeSend: onSent hook failed fn=${fnName} hash=${tx.hash}: ${hookErr?.message ?? hookErr}`);
+            }
+        }
 
         const TX_WAIT_TIMEOUT_MS = 3 * 60_000;
         let waitTimeoutId: NodeJS.Timeout | undefined;

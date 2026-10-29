@@ -5,7 +5,7 @@ import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
 import { addCashbackJob } from '../queue';
 import { addPrizerailEntryJob } from '../queue/prizerailQueues';
-import { entriesFromCashbackUsdc } from '../prizerail/entries';
+import { entriesForOrder } from '../prizerail/entries';
 import {
     anyRatePositive,
     computeCashback,
@@ -63,7 +63,8 @@ const OUTAGE_REMINDER_EVERY = 12;
  * Prizerail (Nov 2026): the same eligibility rules also feed the Prizerail
  * draw programme that replaces LotPot credit. When PRIZERAIL_API_KEY is set,
  * each eligible order additionally enqueues one SendPrizerailEntry job with
- * one entry per cent of the cashback-equivalent amount. Both programmes can
+ * one entry per whole USDC at the default rate (see prizerail/entries.ts).
+ * Both programmes can
  * run side by side during the cutover; each is gated by its own env.
  *
  * Idempotency: the cashback queue's jobId is the orderId, so a WS
@@ -103,7 +104,7 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
 
     // Each programme is on when its own target is configured AND at least
     // one positive rate exists — the default bps or a per-currency override
-    // (an operator may zero the default but still credit ARS).
+    // (an operator may zero the default but still credit one market).
     const ratePositive = anyRatePositive(config);
     const cashbackOn = !!config.cashbackIntegratorAddress && ratePositive;
     const prizerailOn = !!config.prizerail && ratePositive;
@@ -173,7 +174,7 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             if (orderType !== ORDER_TYPE_BUY && orderType !== ORDER_TYPE_SELL) return;
 
             // Resolve the rate per the order's currency, falling back to the
-            // default bps. ARS (Argentina) is 1% vs the default 2%.
+            // default bps (per-market overrides come from CASHBACK_BPS_BY_CURRENCY).
             const currencyCode = decodeCurrency(order.currency);
             const bps = resolveCashbackBps(config, currencyCode);
             if (bps <= 0) {
@@ -232,7 +233,7 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             }
 
             if (prizerailOn) {
-                const entries = entriesFromCashbackUsdc(cashback);
+                const entries = entriesForOrder(amount, bps);
                 if (entries > 0) {
                     await addPrizerailEntryJob({
                         orderId: String(orderId),
@@ -241,7 +242,7 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                     });
                 } else {
                     logger.debug(
-                        `OrderCompleted: orderId=${orderId} cashback=${cashback} → 0 draw entries, skipping prizerail`,
+                        `OrderCompleted: orderId=${orderId} amount=${amount} bps=${bps} → 0 draw entries, skipping prizerail`,
                     );
                 }
             }

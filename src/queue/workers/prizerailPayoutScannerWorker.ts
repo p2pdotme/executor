@@ -6,12 +6,15 @@ import { trySendDiscordAlert } from '../../helpers/discord';
 import { withTimeout } from '../../helpers/provider';
 import { connection } from '../index';
 import {
+    addPrizerailPayoutJob,
     initPrizerailPayoutScannerQueue,
     PRIZERAIL_PAYOUT_SCANNER_QUEUE_NAME,
 } from '../prizerailQueues';
 import { PrizerailClient } from '../../prizerail/client';
-import { resolveEntrants } from '../../prizerail/entrantMap';
-import { isDrawingDone, markAlerted, markDrawingDone, upsertWinner } from '../../prizerail/ledger';
+import { getPrizerailStore } from '../../prizerail/db';
+import { planPayout } from '../../prizerail/payout';
+import { PRIZERAIL_POLICY } from '../../prizerail/config';
+import type { PrizerailStore } from '../../prizerail/store';
 import { formatWinnersAlert, planWinnerRecords, splitDiscordMessage, WinnerRecord } from '../../prizerail/winners';
 import type { PrizerailDrawing, PrizerailDrawingStatus } from '../../prizerail/types';
 import type { PrizerailConfig } from '../../prizerail/config';
@@ -23,22 +26,27 @@ const PAGE_LIMIT = 100;
 // soon as a page holds nothing but drawings already marked done.
 const MAX_PAGES_PER_STATUS = 10;
 // `settled` drawings are re-read until they flip to `paid`; only then is the
-// drawing marked done so later ticks skip it. The settled list only ever
-// holds drawings still waiting on a held prize, so it stays small.
+// drawing marked done so later ticks skip it.
 const SCAN_STATUSES: readonly PrizerailDrawingStatus[] = ['settled', 'paid'];
+const PAYABLE_BATCH = 200;
+// 'paying' rows older than this are re-queued so the worker reconciles them
+// from the chain (see reconcileInFlight). Nothing else ever re-touches them.
+const STALE_PAYING_MS = 5 * 60_000;
 
+type Ctx = { config: ExecutorConfig; prizerail: PrizerailConfig; store: PrizerailStore; client: PrizerailClient };
 type Fetched = { drawings: PrizerailDrawing[]; invalid: number };
 
-async function fetchPending(client: PrizerailClient, slug: string, status: PrizerailDrawingStatus): Promise<Fetched> {
+async function fetchPending(ctx: Ctx, status: PrizerailDrawingStatus): Promise<Fetched> {
+    const slug = ctx.prizerail.campaignSlug;
     const drawings: PrizerailDrawing[] = [];
     let invalid = 0;
     let before: string | undefined;
     for (let page = 0; page < MAX_PAGES_PER_STATUS; page++) {
-        const res = await client.listDrawings({ status, limit: PAGE_LIMIT, before });
+        const res = await ctx.client.listDrawings({ status, limit: PAGE_LIMIT, before });
         invalid += res.invalid;
         let pendingOnPage = 0;
         for (const d of res.drawings) {
-            if (await isDrawingDone(connection, slug, d.id)) continue;
+            if (await ctx.store.isDrawingDone(slug, d.id)) continue;
             pendingOnPage += 1;
             drawings.push(d);
         }
@@ -50,94 +58,106 @@ async function fetchPending(client: PrizerailClient, slug: string, status: Prize
     return { drawings, invalid };
 }
 
-async function alertWinners(
-    config: ExecutorConfig,
-    slug: string,
-    drawing: PrizerailDrawing,
-    records: readonly WinnerRecord[],
-): Promise<boolean> {
-    const chunks = splitDiscordMessage(formatWinnersAlert(slug, drawing, records));
+async function alertWinners(ctx: Ctx, drawing: PrizerailDrawing, records: readonly WinnerRecord[]): Promise<boolean> {
+    const chunks = splitDiscordMessage(formatWinnersAlert(ctx.prizerail.campaignSlug, drawing, records));
     for (const chunk of chunks) {
-        if (!(await trySendDiscordAlert(config.discordOnSuccessWebhookUrl, chunk))) return false;
+        if (!(await trySendDiscordAlert(ctx.config.discordOnSuccessWebhookUrl, chunk))) return false;
     }
     return true;
 }
 
-async function processDrawing(config: ExecutorConfig, prizerail: PrizerailConfig, drawing: PrizerailDrawing): Promise<void> {
-    const slug = prizerail.campaignSlug;
-    const wallets = await resolveEntrants(connection, slug, drawing.winners.map((w) => w.winner));
+async function processDrawing(ctx: Ctx, drawing: PrizerailDrawing): Promise<void> {
+    const slug = ctx.prizerail.campaignSlug;
+    const wallets = await ctx.store.resolveEntrants(slug, drawing.winners.map((w) => w.winner));
     const planned = planWinnerRecords(drawing, (id) => wallets[id] ?? null, Date.now());
 
     const toAlert: WinnerRecord[] = [];
+    const toPay: WinnerRecord[] = [];
     let fresh = 0;
     for (const record of planned) {
-        const result = await upsertWinner(connection, slug, record);
-        if (result.fresh) fresh += 1;
-        if (!result.alerted) toAlert.push(result.record);
+        const decision = planPayout(record, PRIZERAIL_POLICY.maxAutoPayoutCents);
+        const result = await ctx.store.upsertWinner(slug, record, decision);
+        if (result.inserted) fresh += 1;
+        if (!result.alerted) toAlert.push(record);
+        if (result.payoutStatus === 'pending') toPay.push(record);
     }
 
     if (toAlert.length > 0) {
         logger.info(`prizerail-payout-scan: drawing ${drawing.id} (${drawing.status}) → ${fresh} new, ${toAlert.length} to alert`);
         // Mark alerted only once Discord accepted every chunk; otherwise the
         // next tick re-sends rather than forgetting the winners.
-        if (await alertWinners(config, slug, drawing, toAlert)) {
-            await markAlerted(connection, slug, toAlert);
-        }
+        if (await alertWinners(ctx, drawing, toAlert)) await ctx.store.markAlerted(slug, toAlert);
         const unresolved = toAlert.filter((r) => !r.wallet);
         if (unresolved.length > 0) {
             await sendOnFail(
-                config,
+                ctx.config,
                 `Prizerail drawing ${drawing.id}: ${unresolved.length} winner(s) have no wallet in the entrant map — check PRIZERAIL_ENTRANT_HMAC_KEY has not changed`,
             );
         }
     }
-    if (drawing.status === 'paid') await markDrawingDone(connection, slug, drawing.id);
+    if (ctx.prizerail.payoutEnabled) {
+        for (const r of toPay) await addPrizerailPayoutJob({ campaign: slug, drawingId: r.drawingId, position: r.position });
+    }
+    if (drawing.status === 'paid') await ctx.store.markDrawingDone(slug, drawing.id);
 }
 
-async function runTick(config: ExecutorConfig, prizerail: PrizerailConfig, client: PrizerailClient): Promise<void> {
-    const slug = prizerail.campaignSlug;
+// Catch-all: anything still pending in the ledger (a lost job, a released
+// claim after an empty prize wallet) is re-queued. Idempotent — the worker
+// claims the row before paying and the jobId dedupes in-flight jobs.
+async function requeuePayable(ctx: Ctx): Promise<void> {
+    if (!ctx.prizerail.payoutEnabled) return;
+    const slug = ctx.prizerail.campaignSlug;
+    const rows = await ctx.store.listPayable(slug, PAYABLE_BATCH);
+    const stale = await ctx.store.listStalePaying(slug, STALE_PAYING_MS, PAYABLE_BATCH);
+    for (const r of [...rows, ...stale]) await addPrizerailPayoutJob({ campaign: r.campaign, drawingId: r.drawingId, position: r.position });
+    if (rows.length > 0) logger.info(`prizerail-payout-scan: ${rows.length} payable row(s) queued`);
+    if (stale.length > 0) logger.warn(`prizerail-payout-scan: ${stale.length} stale 'paying' row(s) re-queued for reconciliation`);
+}
+
+async function runTick(ctx: Ctx): Promise<void> {
     const seen = new Set<string>();
     let invalid = 0;
     for (const status of SCAN_STATUSES) {
-        const fetched = await fetchPending(client, slug, status);
+        const fetched = await fetchPending(ctx, status);
         invalid += fetched.invalid;
         for (const drawing of fetched.drawings) {
             if (seen.has(drawing.id) || drawing.winners.length === 0) continue;
             seen.add(drawing.id);
-            await processDrawing(config, prizerail, drawing);
+            await processDrawing(ctx, drawing);
         }
     }
+    await requeuePayable(ctx);
     if (invalid > 0) {
-        await sendOnFail(config, `Prizerail scan: ${invalid} drawing(s) skipped as malformed — check the API shape against prizerail/types.ts`);
+        await sendOnFail(ctx.config, `Prizerail scan: ${invalid} drawing(s) skipped as malformed — check the API shape against prizerail/types.ts`);
     }
 }
 
 /**
  * Winner discovery for the Prizerail programme. Reads settled and paid
  * drawings, maps each winner's entrant id back to a wallet, ledgers the
- * result in Redis and posts it to Discord. It sends NO funds: Prizerail pays
- * the campaign wallet, and paying users on from there is a manual step until
- * the payout rail is decided and enabled.
+ * result in Postgres, posts it to Discord and, when payout is enabled,
+ * queues each payable winner for the payout worker.
  */
 export function startPrizerailPayoutScannerWorker(config: ExecutorConfig): void {
     const prizerail = config.prizerail;
-    if (!prizerail || !prizerail.payoutScanEnabled) {
-        logger.info('prizerail-payout-scan: disabled (PRIZERAIL_PAYOUT_SCAN_ENABLED != true) — worker not started');
+    if (!prizerail) {
+        logger.info('prizerail-payout-scan: PRIZERAIL_API_KEY unset — worker not started');
         return;
     }
 
     initPrizerailPayoutScannerQueue();
-    const client = new PrizerailClient({
-        baseUrl: prizerail.baseUrl,
-        apiKey: prizerail.apiKey,
-        campaignSlug: prizerail.campaignSlug,
-    });
+    const ctx: Ctx = {
+        config,
+        prizerail,
+        store: getPrizerailStore(config),
+        client: new PrizerailClient({ baseUrl: prizerail.baseUrl, apiKey: prizerail.apiKey, campaignSlug: prizerail.campaignSlug }),
+    };
 
     const worker = new Worker(
         PRIZERAIL_PAYOUT_SCANNER_QUEUE_NAME,
         async () => {
             logger.info('prizerail-payout-scan: tick start');
-            await withTimeout(runTick(config, prizerail, client), JOB_TIMEOUT_MS);
+            await withTimeout(runTick(ctx), JOB_TIMEOUT_MS);
             logger.info('prizerail-payout-scan: tick done');
         },
         { connection, concurrency: 1, lockDuration: LOCK_DURATION_MS },
@@ -150,5 +170,5 @@ export function startPrizerailPayoutScannerWorker(config: ExecutorConfig): void 
         void sendOnFail(config, msg).catch(() => {});
     });
 
-    logger.info(`prizerail-payout-scan: started (campaign=${prizerail.campaignSlug})`);
+    logger.info(`prizerail-payout-scan: started (campaign=${prizerail.campaignSlug}, payout=${prizerail.payoutEnabled ? 'on' : 'off'})`);
 }
