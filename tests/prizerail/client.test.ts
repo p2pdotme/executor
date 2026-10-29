@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PrizerailApiError, PrizerailClient } from './client';
+import { PrizerailApiError, PrizerailClient } from '../../src/prizerail/client';
 
 type Call = { url: string; init: RequestInit };
 

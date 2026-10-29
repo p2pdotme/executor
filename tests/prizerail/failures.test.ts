@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { PrizerailApiError } from './client';
-import { classifyEntryFailure } from './failures';
+import { PrizerailApiError } from '../../src/prizerail/client';
+import { classifyEntryFailure } from '../../src/prizerail/failures';
 
 const err = (status: number, code: string) => new PrizerailApiError('x', status, code, status === 429 || status >= 500);
 

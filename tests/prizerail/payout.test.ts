@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { centsToUsdc6, planPayout } from './payout';
+import { centsToUsdc6, planPayout } from '../../src/prizerail/payout';
 
 const base = {
     wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { encodeBytes32String } from 'ethers';
-import { anyRatePositive, computeCashback, decodeCurrency, resolveCashbackBps } from './cashbackEligibility';
+import { anyRatePositive, computeCashback, decodeCurrency, resolveCashbackBps } from '../../src/listeners/cashbackEligibility';
 
 describe('decodeCurrency', () => {
     test('decodes a bytes32 symbol and upper-cases it', () => {

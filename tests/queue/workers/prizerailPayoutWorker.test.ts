@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { WinnerRow } from '../../prizerail/store';
-import { payWinner, PayoutDeps, UNCONFIRMED_DEADLINE_MS, UNSENT_GRACE_MS } from './prizerailPayoutWorker';
+import type { WinnerRow } from '../../../src/prizerail/store';
+import { payWinner, PayoutDeps, UNCONFIRMED_DEADLINE_MS, UNSENT_GRACE_MS } from '../../../src/queue/workers/prizerailPayoutWorker';
 
 const WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const PRIZE = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';

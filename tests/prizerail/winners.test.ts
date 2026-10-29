@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { formatWinnersAlert, planWinnerRecords, splitDiscordMessage } from './winners';
-import type { PrizerailDrawing } from './types';
+import { formatWinnersAlert, planWinnerRecords, splitDiscordMessage } from '../../src/prizerail/winners';
+import type { PrizerailDrawing } from '../../src/prizerail/types';
 
 const drawing: PrizerailDrawing = {
     id: 'd9',
