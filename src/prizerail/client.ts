@@ -71,8 +71,8 @@ async function errorFromResponse(res: Response): Promise<PrizerailApiError> {
     let detail = text.slice(0, 200);
     try {
         const body = errorBodySchema.parse(JSON.parse(text));
-        code = body.code ?? code;
-        detail = body.message ?? body.error ?? detail;
+        code = body.error ?? body.code ?? code;
+        detail = body.detail ?? body.message ?? detail;
     } catch {
         // Non-JSON error body — keep the raw excerpt.
     }

@@ -101,9 +101,9 @@ describe('PrizerailClient.sendIncrementEntries', () => {
         expect(calls).toHaveLength(3);
     });
 
-    test('does not retry a 409 event_conflict and surfaces the code', async () => {
+    test('does not retry a 409 event_conflict and surfaces the code (real body shape)', async () => {
         const { client, calls } = makeClient([
-            jsonResponse(409, { code: 'event_conflict', message: 'eventId reused' }),
+            jsonResponse(409, { error: 'event_conflict', detail: 'eventId reused' }),
         ]);
         const err = await client
             .sendIncrementEntries([{ entrantId: 'a', entries: 1, eventId: 'e' }])
@@ -111,8 +111,16 @@ describe('PrizerailClient.sendIncrementEntries', () => {
         expect(err).toBeInstanceOf(PrizerailApiError);
         expect((err as PrizerailApiError).status).toBe(409);
         expect((err as PrizerailApiError).code).toBe('event_conflict');
+        expect((err as PrizerailApiError).message).toContain('eventId reused');
         expect((err as PrizerailApiError).retryable).toBe(false);
         expect(calls).toHaveLength(1);
+    });
+
+    test('still reads a legacy {code,message} error body', async () => {
+        const { client } = makeClient([jsonResponse(409, { code: 'campaign_ended', message: 'over' })]);
+        await expect(
+            client.sendIncrementEntries([{ entrantId: 'a', entries: 1, eventId: 'e' }]),
+        ).rejects.toMatchObject({ code: 'campaign_ended' });
     });
 
     test('does not retry a 400 bad_request', async () => {
