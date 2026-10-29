@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
     loadPrizerailConfig,
+    PRIZERAIL_SITES,
     PRIZERAIL_POLICY,
     PRIZERAIL_PROD_BASE_URL,
     PRIZERAIL_SANDBOX_BASE_URL,
@@ -20,21 +21,20 @@ describe('loadPrizerailConfig', () => {
         expect(loadPrizerailConfig({ PRIZERAIL_API_KEY: '   ' })).toBeNull();
     });
 
-    test('derives the sandbox base URL from a sandbox key', () => {
+    test('a sandbox key selects the sandbox site: its base URL and Base Sepolia', () => {
         const cfg = loadPrizerailConfig(VALID);
+        expect(cfg?.site).toBe('sandbox');
         expect(cfg?.baseUrl).toBe(PRIZERAIL_SANDBOX_BASE_URL);
         expect(cfg?.isSandbox).toBe(true);
+        expect(cfg?.chainId).toBe(84532);
     });
 
-    test('derives the production base URL from a prod key', () => {
+    test('a prod key selects production: its base URL and Base mainnet', () => {
         const cfg = loadPrizerailConfig({ ...VALID, PRIZERAIL_API_KEY: 'pr_prod_xyz' });
+        expect(cfg?.site).toBe('prod');
         expect(cfg?.baseUrl).toBe(PRIZERAIL_PROD_BASE_URL);
         expect(cfg?.isSandbox).toBe(false);
-    });
-
-    test('honours an explicit base URL and strips trailing slashes', () => {
-        const cfg = loadPrizerailConfig({ ...VALID, PRIZERAIL_BASE_URL: 'https://example.test/api/v1///' });
-        expect(cfg?.baseUrl).toBe('https://example.test/api/v1');
+        expect(cfg?.chainId).toBe(8453);
     });
 
     test('rejects an unknown key prefix', () => {
@@ -43,16 +43,23 @@ describe('loadPrizerailConfig', () => {
         );
     });
 
-    test('requires slug and HMAC key once the API key is set', () => {
-        expect(() => loadPrizerailConfig({ PRIZERAIL_API_KEY: VALID.PRIZERAIL_API_KEY })).toThrow(
-            /PRIZERAIL_CAMPAIGN_SLUG/,
+    test('defaults the campaign per site when no slug is set', () => {
+        const { PRIZERAIL_CAMPAIGN_SLUG: _unset, ...withoutSlug } = VALID;
+        expect(loadPrizerailConfig(withoutSlug)?.campaignSlug).toBe(PRIZERAIL_SITES.sandbox.campaignSlug);
+        expect(
+            loadPrizerailConfig({ ...withoutSlug, PRIZERAIL_API_KEY: 'pr_prod_xyz' })?.campaignSlug,
+        ).toBe(PRIZERAIL_SITES.prod.campaignSlug);
+        expect(PRIZERAIL_SITES.prod.campaignSlug).toBe('p2p-ramp');
+        expect(loadPrizerailConfig({ ...VALID, PRIZERAIL_CAMPAIGN_SLUG: '  ' })?.campaignSlug).toBe(
+            PRIZERAIL_SITES.sandbox.campaignSlug,
         );
-        expect(() =>
-            loadPrizerailConfig({
-                PRIZERAIL_API_KEY: VALID.PRIZERAIL_API_KEY,
-                PRIZERAIL_CAMPAIGN_SLUG: 'p2p-daily',
-            }),
-        ).toThrow(/PRIZERAIL_ENTRANT_HMAC_KEY/);
+        expect(loadPrizerailConfig(VALID)?.campaignSlug).toBe('p2p-daily');
+    });
+
+    test('requires the HMAC key once the API key is set', () => {
+        expect(() => loadPrizerailConfig({ PRIZERAIL_API_KEY: VALID.PRIZERAIL_API_KEY })).toThrow(
+            /PRIZERAIL_ENTRANT_HMAC_KEY/,
+        );
     });
 
     test('rejects a short HMAC key', () => {

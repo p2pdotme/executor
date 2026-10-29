@@ -1,5 +1,25 @@
-export const PRIZERAIL_PROD_BASE_URL = 'https://www.prizerail.com/api/v1';
-export const PRIZERAIL_SANDBOX_BASE_URL = 'https://sandbox.prizerail.com/api/v1';
+// One Prizerail site per deployment: production pays real USDC on Base
+// mainnet; the sandbox fakes payouts and pairs with Base Sepolia. The API
+// key prefix picks the site, and the site fixes the campaign and the chain
+// the prize wallet must be on. PRIZERAIL_CAMPAIGN_SLUG can still point a
+// sandbox run at a different sandbox campaign.
+export type PrizerailSite = 'prod' | 'sandbox';
+export const PRIZERAIL_SITES: Readonly<
+    Record<PrizerailSite, { baseUrl: string; campaignSlug: string; chainId: number }>
+> = {
+    prod: {
+        baseUrl: 'https://www.prizerail.com/api/v1',
+        campaignSlug: 'p2p-ramp', // https://www.prizerail.com/campaigns/p2p-ramp
+        chainId: 8453, // Base mainnet
+    },
+    sandbox: {
+        baseUrl: 'https://sandbox.prizerail.com/api/v1',
+        campaignSlug: 'p2pme-p2pdotme-orders', // https://sandbox.prizerail.com/campaigns/p2pme-p2pdotme-orders
+        chainId: 84532, // Base Sepolia
+    },
+};
+export const PRIZERAIL_PROD_BASE_URL = PRIZERAIL_SITES.prod.baseUrl;
+export const PRIZERAIL_SANDBOX_BASE_URL = PRIZERAIL_SITES.sandbox.baseUrl;
 
 const SANDBOX_KEY_PREFIX = 'pr_sandbox_';
 const PROD_KEY_PREFIX = 'pr_prod_';
@@ -38,9 +58,14 @@ export const PRIZERAIL_POLICY = {
 
 export type PrizerailConfig = {
     apiKey: string;
+    site: PrizerailSite;
     campaignSlug: string;
     baseUrl: string;
     isSandbox: boolean;
+    // Chain the site's prizes are paid on. The payout worker refuses to start
+    // on any other chain, so a sandbox key can never drive mainnet USDC and a
+    // prod key can never pay real winners in test tokens.
+    chainId: number;
     // Secret for the entrant-id HMAC. Fixed for the campaign's life — see
     // prizerail/entries.ts.
     entrantHmacKey: string;
@@ -60,15 +85,6 @@ function trimmed(env: Env, name: string): string {
     return (env[name] ?? '').trim();
 }
 
-function parseBaseUrl(env: Env, isSandbox: boolean): string {
-    const explicit = trimmed(env, 'PRIZERAIL_BASE_URL');
-    const url = explicit || (isSandbox ? PRIZERAIL_SANDBOX_BASE_URL : PRIZERAIL_PROD_BASE_URL);
-    if (!/^https:\/\//.test(url)) {
-        throw new Error('PRIZERAIL_BASE_URL must be an https URL');
-    }
-    return url.replace(/\/+$/, '');
-}
-
 /**
  * Parse the Prizerail programme env. Returns null when PRIZERAIL_API_KEY is
  * unset so the executor stays usable for deploys that do not run the draw.
@@ -84,9 +100,10 @@ export function loadPrizerailConfig(env: Env): PrizerailConfig | null {
         throw new Error(`PRIZERAIL_API_KEY must start with ${SANDBOX_KEY_PREFIX} or ${PROD_KEY_PREFIX}`);
     }
 
-    const campaignSlug = trimmed(env, 'PRIZERAIL_CAMPAIGN_SLUG');
-    if (!campaignSlug || !SLUG_PATTERN.test(campaignSlug)) {
-        throw new Error('PRIZERAIL_CAMPAIGN_SLUG is required and must be a lowercase slug');
+    const site: PrizerailSite = isSandbox ? 'sandbox' : 'prod';
+    const campaignSlug = trimmed(env, 'PRIZERAIL_CAMPAIGN_SLUG') || PRIZERAIL_SITES[site].campaignSlug;
+    if (!SLUG_PATTERN.test(campaignSlug)) {
+        throw new Error('PRIZERAIL_CAMPAIGN_SLUG must be a lowercase slug');
     }
 
     const entrantHmacKey = trimmed(env, 'PRIZERAIL_ENTRANT_HMAC_KEY');
@@ -104,9 +121,11 @@ export function loadPrizerailConfig(env: Env): PrizerailConfig | null {
 
     return {
         apiKey,
+        site,
         campaignSlug,
-        baseUrl: parseBaseUrl(env, isSandbox),
+        baseUrl: PRIZERAIL_SITES[site].baseUrl,
         isSandbox,
+        chainId: PRIZERAIL_SITES[site].chainId,
         entrantHmacKey,
         databaseUrl,
         payoutEnabled: !!trimmed(env, 'PRIZE_PAYOUT_EXECUTOR'),

@@ -185,6 +185,11 @@ async function buildDeps(config: ExecutorConfig, prizerail: PrizerailConfig, wal
     const signer = walletManager.getSigner(WalletRole.Prize);
     const provider = signer.provider!;
     const chainId = Number((await withTimeout(provider.getNetwork(), 10_000)).chainId);
+    if (chainId !== prizerail.chainId) {
+        throw new Error(
+            `prizerail-payout: the ${prizerail.site} site pays on chain ${prizerail.chainId} but the RPC is chain ${chainId} — refusing to start (sandbox key ↔ Base Sepolia, prod key ↔ Base mainnet)`,
+        );
+    }
     const usdcAddress = resolveUsdcAddress(chainId);
     const usdc = new Contract(usdcAddress, ERC20_ABI, signer);
     const prizeAddress = await signer.getAddress();
