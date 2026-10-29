@@ -82,10 +82,13 @@ export type PrizerailDrawingsPage = {
     nextBefore: string | null;
 };
 
+// Observed shape (sandbox, 2026-10-29): { error: "<code>", detail: "<text>" }.
+// `code`/`message` kept as fallbacks in case the shape changes.
 export const errorBodySchema = z
     .object({
+        error: z.string().optional(),
+        detail: z.string().optional(),
         code: z.string().optional(),
         message: z.string().optional(),
-        error: z.string().optional(),
     })
     .passthrough();
