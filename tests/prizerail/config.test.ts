@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+    isCurrencyExcluded,
     loadPrizerailConfig,
     PRIZERAIL_SITES,
     PRIZERAIL_POLICY,
@@ -41,6 +42,14 @@ describe('loadPrizerailConfig', () => {
         expect(() => loadPrizerailConfig({ ...VALID, PRIZERAIL_API_KEY: 'sk_live_nope' })).toThrow(
             /PRIZERAIL_API_KEY/,
         );
+    });
+
+    test('production excludes INR, VEN and BOB; the sandbox excludes nothing', () => {
+        const prod = loadPrizerailConfig({ ...VALID, PRIZERAIL_API_KEY: 'pr_prod_xyz' })!;
+        for (const code of ['INR', 'VEN', 'BOB', 'inr ']) expect(isCurrencyExcluded(prod, code)).toBe(true);
+        for (const code of ['ARS', 'MEX', 'BRL', 'NGN', '']) expect(isCurrencyExcluded(prod, code)).toBe(false);
+        const sandbox = loadPrizerailConfig(VALID)!;
+        expect(isCurrencyExcluded(sandbox, 'INR')).toBe(false);
     });
 
     test('defaults the campaign per site when no slug is set', () => {
