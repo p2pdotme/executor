@@ -65,9 +65,10 @@ The executor:
 1. **Event listening** — Subscribes to the Diamond contract on Base (WebSocket). On `OrderPlaced`, immediately enqueues `ToggleMerchantsOffline` and enqueues `AssignMerchants` after a configurable delay. On `OrderCompleted` (when the B2B cashback programme is enabled), enqueues `IssueCashbackCredit` for eligible non-B2B BUY and SELL orders.
 2. **Order sweeper** — Every 1 minute: batch-checks all tracked orders via Multicall3, untracking completed/cancelled ones and auto-cancelling expired ones.
 3. **Order scanner** — Every 1 hour: rescans the last 2 500 blocks to catch any orders the WS listener may have missed.
-4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`).
-5. **Auto-funded wallets** — Five subwallets (toggle, assign, sweeper, cashback, keeper) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
-6. **Liveness probe** — `GET /healthz` and nothing else. There is no API.
+4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`). Being retired with LotPot (Nov 2026).
+5. **Prizerail draw programme** — Opt-in via env. Same eligibility rules and rates as the cashback programme, but instead of credit the user earns entries into a [Prizerail](https://docs.prizerail.com/) prize draw: one entry per cent of the cashback-equivalent amount, posted over HTTPS (no wallet, no tx). An optional scanner ledgers winners and posts them to Discord. See [Prizerail draw programme](#prizerail-draw-programme).
+6. **Auto-funded wallets** — Five subwallets (toggle, assign, sweeper, cashback, keeper) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
+7. **Liveness probe** — `GET /healthz` and nothing else. There is no API.
 
 ---
 
@@ -75,10 +76,12 @@ The executor:
 
 ```
 src/
-├── listeners/          # OrderPlaced WS → enqueue toggle + assign jobs
+├── listeners/          # OrderPlaced WS → enqueue toggle + assign jobs; OrderCompleted → cashback / prizerail
+├── prizerail/          # Prizerail REST client, entrant HMAC + entry math, winner ledger helpers
 ├── schedulers/         # Repeating BullMQ jobs (sweeper every 1m, scanner every 1h)
 ├── queue/
 │   ├── index.ts        # Queue definitions + addToggleJob / addAssignJob helpers
+│   ├── prizerailQueues.ts # Prizerail entry + payout-scanner queues
 │   ├── handlers.ts     # Business logic: toggleMerchantsOffline, assignMerchants
 │   └── workers/        # BullMQ workers: toggle, assign, orderSweeper, orderScanner
 ├── helpers/
@@ -157,6 +160,13 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `PORT` | HTTP port (default `8000`) |
 | `CASHBACK_INTEGRATOR_ADDRESS` | B2B cashback programme: integrator address to call `issueCredit` on. Leave unset (or set `CASHBACK_BPS=0`) to disable the programme entirely — the OrderCompleted listener silently no-ops. |
 | `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
+| `CASHBACK_BPS_BY_CURRENCY` | Per-currency overrides as `CODE:bps,...` (e.g. `ARS:100,MEX:100`). ARS and MEX default to 100 even when unset. Also drives Prizerail entry weights. |
+| `PRIZERAIL_API_KEY` | Prizerail draw programme. Unset = off. `pr_sandbox_*` keys target the sandbox, `pr_prod_*` production. |
+| `PRIZERAIL_CAMPAIGN_SLUG` | Required with the key. The campaign that receives entries. |
+| `PRIZERAIL_ENTRANT_HMAC_KEY` | Required with the key, ≥ 16 chars. Secret for the pseudonymous entrant id. Never rotate on a live campaign. |
+| `PRIZERAIL_BASE_URL` | Optional override of the API base, derived from the key prefix when unset. |
+| `PRIZERAIL_PAYOUT_SCAN_ENABLED` | `true` to run the winner-discovery scanner (ledger + Discord only, sends no funds). Default `false`. |
+| `PRIZERAIL_PAYOUT_SCAN_INTERVAL_MIN` | Scanner interval in minutes (default `30`). |
 
 ### Required — subwallet keys
 
@@ -236,6 +246,64 @@ Every 1 hour — OrderScanner
   └─ Multicall3 batch: getOrdersById for all found orders
   └─ union active IDs into Redis tracking set
 ```
+
+### Prizerail draw programme
+
+Replaces the LotPot credit cashback from November 2026. Nothing about *who* is
+eligible changes — only *what* they get.
+
+```
+OrderCompleted (same filters as cashback: BUY/SELL, non-B2B, rate > 0)
+  └─ cashback = amount × bps / 10 000            (per-currency bps, ARS/MEX = 1%)
+  └─ entries  = cashback in cents                 (0 → skip)
+  └─ enqueue SendPrizerailEntry  (jobId = prizerail-<orderId>)
+       └─ prizerailEntryWorker
+            ├─ entrantId = HMAC-SHA256(PRIZERAIL_ENTRANT_HMAC_KEY, wallet)
+            ├─ HSET prizerail:entrants:<slug> entrantId → wallet   (reverse map for payouts)
+            └─ POST /campaigns/<slug>/entries  mode=increment  eventId=order-<orderId>
+                 (Prizerail ignores repeated eventIds → retries never double-count)
+
+Every PRIZERAIL_PAYOUT_SCAN_INTERVAL_MIN — prizerailPayoutScanner (opt-in)
+  └─ GET /campaigns/<slug>/drawings?status=settled|paid
+  └─ map each winner's entrantId → wallet via the reverse map
+  └─ HSETNX-claim prizerail:winner:<slug>:<drawingId>:<position>  (payoutStatus=pending_manual, alerted=0)
+  └─ Discord: winners, amounts, held-by-Prizerail flags, unresolved entrants
+```
+
+**What is deliberately not automated.** Prizerail pays prize USDC to the
+campaign's payout wallet, not to users. Paying users on from there would mean
+an executor wallet that custodies USDC, which this service has never done (see
+[No funds at risk](#no-funds-at-risk)). Until that decision is made, the
+scanner only records and alerts; the ledger in Redis is the source of truth
+for manual payouts.
+
+**Operational notes.**
+- `DRY_RUN=true` skips sending entries only with a `pr_prod_*` key. Sandbox
+  entries are always sent — that is what the sandbox is for.
+- Only a provably bad request is dropped: 400, 404, 422, or a 409 whose code
+  is `event_conflict` / `campaign_ended`. The worker alerts and completes the
+  job. Everything else — 401/403 from a rotated key, a paused campaign
+  (`no_open_drawing`), 429, 5xx, transport — is retried by BullMQ for about
+  20 minutes and then **retained as a failed job** for manual retry, with a
+  Discord alert. Retrying is always safe: Prizerail dedupes on `eventId`.
+- A 2xx whose body does not match the expected shape is still a success;
+  the entry has landed and the body is only logged.
+- The entrant map (`prizerail:entrants:<slug>`) is the only link from a
+  winner back to a wallet and lives in Redis. It can be rebuilt from order
+  history (wallet → HMAC) as long as the key is unchanged, but back it up
+  with the rest of Redis before enabling production.
+- Winner records are claimed with `HSETNX`, so overlapping scanner ticks or
+  two replicas cannot double-alert. The Discord alert is only marked sent
+  once the webhook accepts every chunk; a lost webhook call is retried on
+  the next tick. A winner whose wallet was unresolved is re-resolved on
+  later ticks if the map is repaired.
+- The HMAC key is part of the campaign's identity. Rotating it makes every
+  wallet a new entrant, breaks guarantee-draw de-duplication, and leaves
+  existing winners unresolvable. The scanner raises a Discord alert when a
+  winner has no wallet in the map.
+- Prizerail's eligibility rules (age, excluded US states, OFAC) are not
+  enforced here. The order carries only a currency; filtering by residency
+  has to happen upstream of `OrderCompleted` or be agreed with Prizerail.
 
 ### All contract writes
 

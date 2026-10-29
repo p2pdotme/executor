@@ -1,9 +1,17 @@
-import { Contract, decodeBytes32String } from 'ethers';
+import { Contract } from 'ethers';
 import { ExecutorConfig } from '../helpers/config';
 import { getBaseWsProvider, getBaseHttpProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
 import { addCashbackJob } from '../queue';
+import { addPrizerailEntryJob } from '../queue/prizerailQueues';
+import { entriesFromCashbackUsdc } from '../prizerail/entries';
+import {
+    anyRatePositive,
+    computeCashback,
+    decodeCurrency,
+    resolveCashbackBps,
+} from './cashbackEligibility';
 import { sendDiscordAlert } from '../helpers/discord';
 
 const ORDER_COMPLETED_EVENT = 'OrderCompleted';
@@ -11,7 +19,6 @@ const ORDER_COMPLETED_EVENT = 'OrderCompleted';
 // OrderProcessorStorage.OrderType enum: { BUY=0, SELL=1, PAY=2 }
 const ORDER_TYPE_BUY = 0;
 const ORDER_TYPE_SELL = 1;
-const BPS_DENOMINATOR = 10_000n;
 
 // Gap-reconcile tuning. On WS reconnect we replay OrderCompleted logs that
 // were emitted while the socket was down via HTTP eth_getLogs. Chunk size
@@ -35,27 +42,6 @@ const STABLE_UPTIME_MS = 120_000;
 // Emit a reminder every Nth failed attempt while an outage persists.
 const OUTAGE_REMINDER_EVERY = 12;
 
-// Decode the order's bytes32 currency into its symbol (e.g. "ARS"). Returns
-// '' when the field is empty/unset or not a valid bytes32 string so callers
-// can safely fall back to the default cashback rate.
-function decodeCurrency(currency: unknown): string {
-    if (typeof currency !== 'string' || !currency) return '';
-    try {
-        return decodeBytes32String(currency).trim().toUpperCase();
-    } catch {
-        return '';
-    }
-}
-
-// Resolve the cashback bps for an order: a per-currency override when one is
-// configured for the order's currency, otherwise the default cashbackBps.
-function resolveCashbackBps(config: ExecutorConfig, currencyCode: string): number {
-    if (currencyCode && currencyCode in config.cashbackBpsByCurrency) {
-        return config.cashbackBpsByCurrency[currencyCode];
-    }
-    return config.cashbackBps;
-}
-
 /**
  * B2B cashback programme listener — server-side mirror of the
  * contracts-v4 handleLotpotBuyerCashback hook that used to live inside
@@ -73,6 +59,12 @@ function resolveCashbackBps(config: ExecutorConfig, currencyCode: string): numbe
  * Programme is opt-in: when CASHBACK_INTEGRATOR_ADDRESS or CASHBACK_BPS
  * is unset, this listener silently no-ops on every event (we still
  * subscribe, so toggling the env on later doesn't need a restart).
+ *
+ * Prizerail (Nov 2026): the same eligibility rules also feed the Prizerail
+ * draw programme that replaces LotPot credit. When PRIZERAIL_API_KEY is set,
+ * each eligible order additionally enqueues one SendPrizerailEntry job with
+ * one entry per cent of the cashback-equivalent amount. Both programmes can
+ * run side by side during the cutover; each is gated by its own env.
  *
  * Idempotency: the cashback queue's jobId is the orderId, so a WS
  * reconnect that replays a recent block won't double-issue credit.
@@ -109,18 +101,20 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
     let consecutiveFailures = 0;
     let outageAlerted = false;
 
-    // Programme is on when an integrator is configured AND at least one
-    // positive rate exists — either the default bps or a per-currency
-    // override (an operator may zero the default but still credit ARS).
-    const anyCurrencyOverridePositive = Object.values(
-        config.cashbackBpsByCurrency,
-    ).some((bps) => bps > 0);
-    const programmeOn =
-        !!config.cashbackIntegratorAddress &&
-        (config.cashbackBps > 0 || anyCurrencyOverridePositive);
+    // Each programme is on when its own target is configured AND at least
+    // one positive rate exists — the default bps or a per-currency override
+    // (an operator may zero the default but still credit ARS).
+    const ratePositive = anyRatePositive(config);
+    const cashbackOn = !!config.cashbackIntegratorAddress && ratePositive;
+    const prizerailOn = !!config.prizerail && ratePositive;
+    const programmeOn = cashbackOn || prizerailOn;
     if (!programmeOn) {
         logger.info(
-            'OrderCompleted: cashback programme disabled (env unset) — listener attached as no-op so toggling env later does not require restart',
+            'OrderCompleted: cashback + prizerail programmes disabled (env unset) — listener attached as no-op so toggling env later does not require restart',
+        );
+    } else {
+        logger.info(
+            `OrderCompleted: programmes — cashback=${cashbackOn ? 'on' : 'off'} prizerail=${prizerailOn ? `on (${config.prizerail?.campaignSlug})` : 'off'}`,
         );
     }
 
@@ -190,7 +184,7 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             }
 
             const amount: bigint = order.amount;
-            const cashback = (amount * BigInt(bps)) / BPS_DENOMINATOR;
+            const cashback = computeCashback(amount, bps);
             if (cashback <= 0n) {
                 logger.debug(
                     `OrderCompleted: orderId=${orderId} amount=${amount} → 0 cashback after bps, skipping`,
@@ -225,15 +219,32 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 `OrderCompleted (eligible ${orderTypeLabel}, ${source}): orderId=${orderId} user=${user} amount=${amount} currency=${currencyCode || 'n/a'} bps=${bps} cashback=${cashback} txHash=${txHash}`,
             );
 
-            await addCashbackJob(
-                'IssueCashbackCredit',
-                {
-                    orderId: String(orderId),
-                    user: String(user),
-                    amount: cashback.toString(),
-                },
-                { jobId: `cashback-${String(orderId)}` },
-            );
+            if (cashbackOn) {
+                await addCashbackJob(
+                    'IssueCashbackCredit',
+                    {
+                        orderId: String(orderId),
+                        user: String(user),
+                        amount: cashback.toString(),
+                    },
+                    { jobId: `cashback-${String(orderId)}` },
+                );
+            }
+
+            if (prizerailOn) {
+                const entries = entriesFromCashbackUsdc(cashback);
+                if (entries > 0) {
+                    await addPrizerailEntryJob({
+                        orderId: String(orderId),
+                        user: String(user),
+                        entries,
+                    });
+                } else {
+                    logger.debug(
+                        `OrderCompleted: orderId=${orderId} cashback=${cashback} → 0 draw entries, skipping prizerail`,
+                    );
+                }
+            }
         } catch (err: any) {
             logger.error(
                 { error: String(err?.message ?? err), source },

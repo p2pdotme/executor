@@ -26,6 +26,18 @@ export type IssueCashbackCreditJobData = {
     amount: string; // USDC 6-decimals as a uint256 string
 };
 
+// SendPrizerailEntry job payload — the Prizerail draw programme (see
+// queue/workers/prizerailEntryWorker.ts). One job per eligible order; the
+// worker derives the pseudonymous entrant id from `user` and posts an
+// increment-mode event keyed by orderId. Runs on its own queue.
+export const PRIZERAIL_ENTRY_JOB_NAME = 'SendPrizerailEntry';
+
+export type PrizerailEntryJobData = {
+    orderId: string;
+    user: string; // 0x-prefixed wallet; never sent to Prizerail as-is
+    entries: number; // integer >= 1
+};
+
 // SettleClaim job payload — the insurance settlement keeper (see
 // queue/workers/settleClaimJob.ts) settles one approved claim per job once its
 // 48h contest window has elapsed. These jobs run on the DAILY KEEPER queue so the
