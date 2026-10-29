@@ -61,6 +61,16 @@ function requireEnv(name: string): string {
     return v;
 }
 
+function optionalEnv(name: string): string {
+    const v = (process.env[name] ?? '').trim();
+    if (!v) {
+        // logger is not imported here to keep config dependency-free;
+        // console is acceptable for a one-time boot notice.
+        console.warn(`[config] ${name} unset — alerts for this channel go to logs only`);
+    }
+    return v;
+}
+
 // Parse the per-currency cashback override env into a {CODE: bps} map and
 // merge it over the built-in defaults (env wins per currency). Format is a
 // comma-separated list of CODE:bps pairs, e.g. "ARS:100,VEN:50". Currency
@@ -94,9 +104,12 @@ function parseCashbackBpsByCurrency(raw: string): Record<string, number> {
 export function loadExecutorConfig(): ExecutorConfig {
     const alchemyApiKey = requireEnv('ALCHEMY_API_KEY');
     const diamondAddress = requireEnv('DIAMOND_ADDRESS');
-    const discordOnSuccessWebhookUrl = requireEnv('DISCORD_ONSUCCESS_WEBHOOK_URL');
-    const discordOnFailWebhookUrl = requireEnv('DISCORD_ONFAIL_WEBHOOK_URL');
-    const discordBalanceWebhookUrl = requireEnv('DISCORD_BALANCE_WEBHOOK_URL');
+    // Optional. sendDiscordAlert no-ops on an empty URL, so a local or
+    // community run without Discord still boots — alerts land in the logs
+    // only. Production deploys should set all three.
+    const discordOnSuccessWebhookUrl = optionalEnv('DISCORD_ONSUCCESS_WEBHOOK_URL');
+    const discordOnFailWebhookUrl = optionalEnv('DISCORD_ONFAIL_WEBHOOK_URL');
+    const discordBalanceWebhookUrl = optionalEnv('DISCORD_BALANCE_WEBHOOK_URL');
     const fundingExecutorKey = requireEnv('FUNDING_EXECUTOR');
     const dryRun = process.env.DRY_RUN === 'true';
     const minBaseBalanceEth = Number(process.env.MIN_BASE_BALANCE_ETH ?? '0.005');

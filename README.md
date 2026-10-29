@@ -144,15 +144,16 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `ALCHEMY_API_KEY` | Alchemy API key for Base mainnet |
 | `DIAMOND_ADDRESS` | Diamond contract address on Base |
 | `FUNDING_EXECUTOR` | Private key of the funding wallet (tops up subwallets) |
-| `DISCORD_ONSUCCESS_WEBHOOK_URL` | Discord webhook — successful tx alerts |
-| `DISCORD_ONFAIL_WEBHOOK_URL` | Discord webhook — failed tx / WS error alerts |
-| `DISCORD_BALANCE_WEBHOOK_URL` | Discord webhook — balance + auto-fund alerts |
 | `ASSIGN_DELAY_IN_SECONDS` | Seconds to wait before assigning merchants after OrderPlaced (e.g. `90`) |
 
 ### Optional
 
 | Variable | Description |
 |---|---|
+| `DISCORD_ONSUCCESS_WEBHOOK_URL` | Discord webhook — successful tx alerts. Unset = logs only (boot warns). Set all three in production. |
+| `DISCORD_ONFAIL_WEBHOOK_URL` | Discord webhook — failed tx / WS error alerts. Unset = logs only. |
+| `DISCORD_BALANCE_WEBHOOK_URL` | Discord webhook — balance + auto-fund alerts. Unset = logs only. |
+| `RPC_HTTP_URL` / `RPC_WS_URL` | Override the Base mainnet Alchemy endpoints, e.g. Base Sepolia or a local fork. |
 | `REDIS_URL` | Default: `redis://redis:6379`. Use `redis://localhost:6379` for local dev |
 | `MIN_BASE_BALANCE_ETH` | Minimum subwallet ETH before auto-fund kicks in (default `0.005`) |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default `info`) |
