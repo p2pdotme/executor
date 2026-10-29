@@ -16,3 +16,4 @@ prev.yml
 .DS_Store
 *.log
 npm-debug.log*
+dump.rdb

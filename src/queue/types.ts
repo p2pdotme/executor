@@ -38,6 +38,17 @@ export type PrizerailEntryJobData = {
     entries: number; // integer >= 1
 };
 
+// PrizerailPayout job payload — one winner row to pay from the prize
+// wallet (see queue/workers/prizerailPayoutWorker.ts). Keyed by the
+// ledger's primary key; the worker claims the row before sending.
+export const PRIZERAIL_PAYOUT_JOB_NAME = 'PrizerailPayout';
+
+export type PrizerailPayoutJobData = {
+    campaign: string;
+    drawingId: string;
+    position: number;
+};
+
 // SettleClaim job payload — the insurance settlement keeper (see
 // queue/workers/settleClaimJob.ts) settles one approved claim per job once its
 // 48h contest window has elapsed. These jobs run on the DAILY KEEPER queue so the

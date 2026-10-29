@@ -8,7 +8,7 @@ import { PRIZERAIL_ENTRY_JOB_NAME, PrizerailEntryJobData } from '../types';
 import { PrizerailClient } from '../../prizerail/client';
 import { classifyEntryFailure } from '../../prizerail/failures';
 import { entrantIdFor } from '../../prizerail/entries';
-import { rememberEntrant } from '../../prizerail/entrantMap';
+import { getPrizerailStore } from '../../prizerail/db';
 import type { PrizerailConfig } from '../../prizerail/config';
 
 const LOCK_DURATION_MS = 60_000;
@@ -51,7 +51,7 @@ async function sendEntry(
 
     // Record the reverse map BEFORE the call: if we crash between the two,
     // a retry re-sends (deduped by eventId) and the map is already there.
-    await rememberEntrant(connection, prizerail.campaignSlug, entrantId, user);
+    await getPrizerailStore(config).rememberEntrant(prizerail.campaignSlug, entrantId, user);
 
     const res = await client.sendIncrementEntries([
         { entrantId, entries, eventId: eventIdForOrder(orderId) },

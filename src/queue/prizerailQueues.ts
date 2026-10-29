@@ -1,7 +1,12 @@
 import { Queue, Job } from 'bullmq';
 import { connection } from './index';
 import { logger } from '../helpers/logger';
-import { PRIZERAIL_ENTRY_JOB_NAME, PrizerailEntryJobData } from './types';
+import {
+    PRIZERAIL_ENTRY_JOB_NAME,
+    PRIZERAIL_PAYOUT_JOB_NAME,
+    PrizerailEntryJobData,
+    PrizerailPayoutJobData,
+} from './types';
 
 // One job per eligible order: POST increment-mode entries to Prizerail.
 // No wallet, no tx — only an HTTPS call — so it runs on its own queue and
@@ -9,9 +14,13 @@ import { PRIZERAIL_ENTRY_JOB_NAME, PrizerailEntryJobData } from './types';
 export const PRIZERAIL_ENTRY_QUEUE_NAME = 'prizerail-entry-calls';
 // Periodic read of settled/paid drawings → winner ledger + Discord alert.
 export const PRIZERAIL_PAYOUT_SCANNER_QUEUE_NAME = 'prizerail-payout-scanner-calls';
+// USDC transfers from the prize wallet. Its own queue with ONE consumer:
+// the only writer to the Prize NonceManager (same rule as the keeper).
+export const PRIZERAIL_PAYOUT_QUEUE_NAME = 'prizerail-payout-calls';
 
 let prizerailEntryQueue: Queue<PrizerailEntryJobData> | undefined;
 let prizerailPayoutScannerQueue: Queue<Record<string, never>> | undefined;
+let prizerailPayoutQueue: Queue<PrizerailPayoutJobData> | undefined;
 
 export function initPrizerailEntryQueue(): Queue<PrizerailEntryJobData> {
     if (!prizerailEntryQueue) {
@@ -58,6 +67,42 @@ export function initPrizerailPayoutScannerQueue(): Queue<Record<string, never>> 
         logger.info(`queue: ${PRIZERAIL_PAYOUT_SCANNER_QUEUE_NAME} initialised`);
     }
     return prizerailPayoutScannerQueue;
+}
+
+export function initPrizerailPayoutQueue(): Queue<PrizerailPayoutJobData> {
+    if (!prizerailPayoutQueue) {
+        prizerailPayoutQueue = new Queue<PrizerailPayoutJobData>(PRIZERAIL_PAYOUT_QUEUE_NAME, {
+            connection,
+            defaultJobOptions: {
+                removeOnComplete: true,
+                // The ledger row, not the job, is the source of truth: the
+                // scanner re-queues anything still pending on every tick, so
+                // a failed job can be dropped without losing the payout.
+                removeOnFail: true,
+                // Empty prize wallet / RPC trouble: back off for a while, then
+                // let the next scanner tick re-queue.
+                attempts: 4,
+                backoff: { type: 'exponential', delay: 30_000 },
+            },
+        });
+        logger.info(`queue: ${PRIZERAIL_PAYOUT_QUEUE_NAME} initialised`);
+    }
+    return prizerailPayoutQueue;
+}
+
+export async function addPrizerailPayoutJob(data: PrizerailPayoutJobData): Promise<Job<PrizerailPayoutJobData>> {
+    const queue = initPrizerailPayoutQueue();
+    // jobId = ledger primary key: an in-flight payout for this winner is
+    // never duplicated. Once complete the job is removed, and the worker's
+    // claimPayout guard makes any later re-add a no-op.
+    const job = await queue.add(PRIZERAIL_PAYOUT_JOB_NAME, data, {
+        jobId: `prizerail-payout-${data.campaign}-${data.drawingId}-${data.position}`,
+    });
+    const state = await job.getState();
+    if (state === 'waiting' || state === 'delayed') {
+        logger.info(`queue(${PRIZERAIL_PAYOUT_QUEUE_NAME}): queued payout ${data.drawingId}#${data.position}`);
+    }
+    return job;
 }
 
 export async function addPrizerailEntryJob(data: PrizerailEntryJobData): Promise<Job<PrizerailEntryJobData>> {

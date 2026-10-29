@@ -1,0 +1,181 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { PrizerailStore } from './store';
+import type { WinnerRecord } from './winners';
+
+// Integration test against a real Postgres. Set PRIZERAIL_TEST_DATABASE_URL
+// (e.g. the executor-postgres container) to run; skipped otherwise so the
+// unit suite stays green on a laptop without Postgres.
+const url = process.env.PRIZERAIL_TEST_DATABASE_URL;
+const run = url ? describe : describe.skip;
+
+const SLUG = `test-${Date.now()}`;
+
+const record = (over: Partial<WinnerRecord> = {}): WinnerRecord => ({
+    drawingId: 'd1',
+    drawingNumber: 1,
+    drawingKind: 'regular',
+    drawingStatus: 'settled',
+    drawAt: '2026-11-03T17:00:00.000Z',
+    position: 0,
+    entrantId: 'ent-a',
+    wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    amountCents: 1500,
+    heldForManualPayout: false,
+    payoutStatus: 'pending',
+    recordedAt: 1_000,
+    ...over,
+});
+
+run('PrizerailStore', () => {
+    let store: PrizerailStore;
+
+    beforeAll(async () => {
+        store = new PrizerailStore(url!);
+        await store.applySchema();
+        // Second apply must be a no-op (boot runs it every time).
+        await store.applySchema();
+    });
+
+    afterAll(async () => {
+        await store.close();
+    });
+
+    beforeEach(async () => {
+        await store.deleteCampaign(SLUG);
+    });
+
+    test('entrant map: remember and resolve, case-insensitive wallet', async () => {
+        await store.rememberEntrant(SLUG, 'ent-a', '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+        await store.rememberEntrant(SLUG, 'ent-a', '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'); // idempotent
+        const map = await store.resolveEntrants(SLUG, ['ent-a', 'ent-missing']);
+        expect(map['ent-a']).toBe('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+        expect(map['ent-missing']).toBeNull();
+        expect(await store.resolveEntrants(SLUG, [])).toEqual({});
+    });
+
+    test('upsertWinner inserts once, then only patches status and a late wallet', async () => {
+        const first = await store.upsertWinner(SLUG, record({ wallet: null, payoutStatus: 'unresolved_entrant' }), {
+            status: 'unresolved_entrant',
+            reason: 'no wallet for entrant id',
+        });
+        expect(first.inserted).toBe(true);
+        expect(first.alerted).toBe(false);
+        expect(first.payoutStatus).toBe('unresolved_entrant');
+
+        const second = await store.upsertWinner(SLUG, record({ drawingStatus: 'paid' }), { status: 'pending', reason: null });
+        expect(second.inserted).toBe(false);
+        expect(second.payoutStatus).toBe('pending');
+
+        const row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row?.drawingStatus).toBe('paid');
+        expect(row?.wallet).toBe(record().wallet);
+        expect(row?.recordedAt).toBe(1_000); // original kept
+    });
+
+    test('a stored wallet is never cleared and a paid row is never reopened', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        const claimed = await store.claimPayout(SLUG, 'd1', 0);
+        expect(claimed?.payoutStatus).toBe('paying');
+        await store.markPaid(SLUG, 'd1', 0, '0xhash');
+
+        const again = await store.upsertWinner(SLUG, record({ wallet: null }), { status: 'unresolved_entrant', reason: 'x' });
+        expect(again.payoutStatus).toBe('paid');
+        const row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row?.wallet).toBe(record().wallet);
+        expect(row?.txHash).toBe('0xhash');
+    });
+
+    test('a hold or amount change seen later parks a pending row', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        await store.upsertWinner(SLUG, record({ heldForManualPayout: true }), { status: 'held', reason: 'held by Prizerail' });
+        let row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row?.payoutStatus).toBe('held');
+        expect(row?.heldForManualPayout).toBe(true);
+        expect(row?.holdReason).toMatch(/after first sighting/);
+
+        await store.upsertWinner(SLUG, record({ position: 1 }), { status: 'pending', reason: null });
+        await store.upsertWinner(SLUG, record({ position: 1, amountCents: 2500 }), { status: 'pending', reason: null });
+        row = await store.getWinner(SLUG, 'd1', 1);
+        expect(row?.payoutStatus).toBe('held');
+        expect(row?.holdReason).toMatch(/amount changed/);
+        expect(row?.amountCents).toBe(1500); // original amount kept for the human to compare
+    });
+
+    test('claim snapshots nothing; recordSendNonce/recordTxHash only apply while paying', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        await store.recordSendNonce(SLUG, 'd1', 0, 42); // not paying yet → ignored
+        expect((await store.getWinner(SLUG, 'd1', 0))?.sendNonce).toBeNull();
+        await store.claimPayout(SLUG, 'd1', 0);
+        await store.recordSendNonce(SLUG, 'd1', 0, 42);
+        await store.recordTxHash(SLUG, 'd1', 0, '0xabc');
+        const row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row?.sendNonce).toBe(42);
+        expect(row?.txHash).toBe('0xabc');
+        expect(row?.updatedAt).toBeGreaterThan(0);
+        await store.releaseClaim(SLUG, 'd1', 0, 'x');
+        const released = await store.getWinner(SLUG, 'd1', 0);
+        expect(released?.sendNonce).toBeNull();
+        expect(released?.txHash).toBeNull();
+    });
+
+    test('listStalePaying returns only old paying rows', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        await store.claimPayout(SLUG, 'd1', 0);
+        expect(await store.listStalePaying(SLUG, 60_000, 10)).toHaveLength(0);
+        expect((await store.listStalePaying(SLUG, 0, 10)).map((r) => r.position)).toEqual([0]);
+    });
+
+    test('markAlerted flips the flag', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        await store.markAlerted(SLUG, [record()]);
+        const second = await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        expect(second.alerted).toBe(true);
+    });
+
+    test('claimPayout is at-most-once and releaseClaim reopens it', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        const a = await store.claimPayout(SLUG, 'd1', 0);
+        const b = await store.claimPayout(SLUG, 'd1', 0);
+        expect(a?.payoutStatus).toBe('paying');
+        expect(b).toBeNull();
+
+        await store.releaseClaim(SLUG, 'd1', 0, 'insufficient balance');
+        const row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row?.payoutStatus).toBe('pending');
+        expect(row?.attempts).toBe(1);
+        expect(row?.lastError).toBe('insufficient balance');
+    });
+
+    test('recordTxHash, markManual and markFailed keep the hash and reason', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        await store.claimPayout(SLUG, 'd1', 0);
+        await store.recordTxHash(SLUG, 'd1', 0, '0xsent');
+        await store.markManual(SLUG, 'd1', 0, 'tx wait timed out');
+        let row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row?.payoutStatus).toBe('manual');
+        expect(row?.txHash).toBe('0xsent');
+        expect(row?.lastError).toBe('tx wait timed out');
+
+        await store.upsertWinner(SLUG, record({ position: 1 }), { status: 'pending', reason: null });
+        await store.claimPayout(SLUG, 'd1', 1);
+        await store.markFailed(SLUG, 'd1', 1, 'presim reverted');
+        row = await store.getWinner(SLUG, 'd1', 1);
+        expect(row?.payoutStatus).toBe('failed');
+    });
+
+    test('listPayable returns only pending rows with a wallet, oldest first', async () => {
+        await store.upsertWinner(SLUG, record({ position: 0, drawAt: '2026-11-03T17:00:00.000Z' }), { status: 'pending', reason: null });
+        await store.upsertWinner(SLUG, record({ position: 1, drawAt: '2026-11-02T17:00:00.000Z' }), { status: 'pending', reason: null });
+        await store.upsertWinner(SLUG, record({ position: 2, heldForManualPayout: true }), { status: 'held', reason: 'held by prizerail' });
+        await store.upsertWinner(SLUG, record({ position: 3, wallet: null }), { status: 'unresolved_entrant', reason: 'x' });
+        const rows = await store.listPayable(SLUG, 10);
+        expect(rows.map((r) => r.position)).toEqual([1, 0]);
+    });
+
+    test('drawing done set', async () => {
+        expect(await store.isDrawingDone(SLUG, 'd1')).toBe(false);
+        await store.markDrawingDone(SLUG, 'd1');
+        await store.markDrawingDone(SLUG, 'd1');
+        expect(await store.isDrawingDone(SLUG, 'd1')).toBe(true);
+    });
+});

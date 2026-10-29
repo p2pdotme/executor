@@ -66,7 +66,7 @@ The executor:
 2. **Order sweeper** — Every 1 minute: batch-checks all tracked orders via Multicall3, untracking completed/cancelled ones and auto-cancelling expired ones.
 3. **Order scanner** — Every 1 hour: rescans the last 2 500 blocks to catch any orders the WS listener may have missed.
 4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`). Being retired with LotPot (Nov 2026).
-5. **Prizerail draw programme** — Opt-in via env. Same eligibility rules and rates as the cashback programme, but instead of credit the user earns entries into a [Prizerail](https://docs.prizerail.com/) prize draw: one entry per cent of the cashback-equivalent amount, posted over HTTPS (no wallet, no tx). An optional scanner ledgers winners and posts them to Discord. See [Prizerail draw programme](#prizerail-draw-programme).
+5. **Prizerail draw programme** — Opt-in via env. Same eligibility rules and rates as the cashback programme, but instead of credit the user earns entries into a [Prizerail](https://docs.prizerail.com/) prize draw: one entry per whole USDC at the default rate (a $50 order = 50 entries), posted over HTTPS (no wallet, no tx). An optional scanner ledgers winners and posts them to Discord. See [Prizerail draw programme](#prizerail-draw-programme).
 6. **Auto-funded wallets** — Five subwallets (toggle, assign, sweeper, cashback, keeper) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
 7. **Liveness probe** — `GET /healthz` and nothing else. There is no API.
 
@@ -161,13 +161,12 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `PORT` | HTTP port (default `8000`) |
 | `CASHBACK_INTEGRATOR_ADDRESS` | B2B cashback programme: integrator address to call `issueCredit` on. Leave unset (or set `CASHBACK_BPS=0`) to disable the programme entirely — the OrderCompleted listener silently no-ops. |
 | `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
-| `CASHBACK_BPS_BY_CURRENCY` | Per-currency overrides as `CODE:bps,...` (e.g. `ARS:100,MEX:100`). ARS and MEX default to 100 even when unset. Also drives Prizerail entry weights. |
+| `CASHBACK_BPS_BY_CURRENCY` | Per-currency overrides as `CODE:bps,...`. Built-in: `INR`, `VEN`, `BOB` at 0 (excluded). Also drives Prizerail entry weights. |
 | `PRIZERAIL_API_KEY` | Prizerail draw programme. Unset = off. `pr_sandbox_*` keys target the sandbox, `pr_prod_*` production. |
 | `PRIZERAIL_CAMPAIGN_SLUG` | Required with the key. The campaign that receives entries. |
 | `PRIZERAIL_ENTRANT_HMAC_KEY` | Required with the key, ≥ 16 chars. Secret for the pseudonymous entrant id. Never rotate on a live campaign. |
 | `PRIZERAIL_BASE_URL` | Optional override of the API base, derived from the key prefix when unset. |
-| `PRIZERAIL_PAYOUT_SCAN_ENABLED` | `true` to run the winner-discovery scanner (ledger + Discord only, sends no funds). Default `false`. |
-| `PRIZERAIL_PAYOUT_SCAN_INTERVAL_MIN` | Scanner interval in minutes (default `30`). |
+| `DATABASE_URL` | Postgres for the Prizerail ledger. Required with the key. |
 
 ### Required — subwallet keys
 
@@ -180,6 +179,7 @@ All five are mandatory; the executor refuses to boot if any is missing.
 | `ORDER_SWEEPER_EXECUTOR` | Private key for the sweeper wallet |
 | `CASHBACK_EXECUTOR` | Private key for the cashback wallet. Its address must be whitelisted on the cashback integrator via `setCreditIssuer(addr, true)` before `issueCredit` calls land — the startup Discord message prints the address explicitly so you know what to whitelist. |
 | `KEEPER_EXECUTOR` | Private key for the daily keeper wallet (`approveUnstakeBatch` + `blacklistInactiveMerchants`) |
+| `PRIZE_PAYOUT_EXECUTOR` | *Optional.* Prize wallet for Prizerail payouts; holds and sends USDC. Setting it turns automatic payouts on. USDC is resolved per chain in code. |
 
 ---
 
@@ -255,8 +255,8 @@ eligible changes — only *what* they get.
 
 ```
 OrderCompleted (same filters as cashback: BUY/SELL, non-B2B, rate > 0)
-  └─ cashback = amount × bps / 10 000            (per-currency bps, ARS/MEX = 1%)
-  └─ entries  = cashback in cents                 (0 → skip)
+  └─ cashback = amount × bps / 10 000            (per-currency bps via env, default 2%)
+  └─ entries  = whole USDC × bps / 200          (2% → 1 entry per $1; 0 → skip)
   └─ enqueue SendPrizerailEntry  (jobId = prizerail-<orderId>)
        └─ prizerailEntryWorker
             ├─ entrantId = HMAC-SHA256(PRIZERAIL_ENTRANT_HMAC_KEY, wallet)
@@ -264,19 +264,47 @@ OrderCompleted (same filters as cashback: BUY/SELL, non-B2B, rate > 0)
             └─ POST /campaigns/<slug>/entries  mode=increment  eventId=order-<orderId>
                  (Prizerail ignores repeated eventIds → retries never double-count)
 
-Every PRIZERAIL_PAYOUT_SCAN_INTERVAL_MIN — prizerailPayoutScanner (opt-in)
+Every PRIZERAIL_POLICY.payoutScanIntervalMin (5 min) — prizerailPayoutScanner
   └─ GET /campaigns/<slug>/drawings?status=settled|paid
   └─ map each winner's entrantId → wallet via the reverse map
-  └─ HSETNX-claim prizerail:winner:<slug>:<drawingId>:<position>  (payoutStatus=pending_manual, alerted=0)
+  └─ INSERT prizerail_winners (campaign, drawing, position) ON CONFLICT → patch status / late wallet
+  └─ payout enabled? → queue PrizerailPayout for every 'pending' row
   └─ Discord: winners, amounts, held-by-Prizerail flags, unresolved entrants
 ```
 
-**What is deliberately not automated.** Prizerail pays prize USDC to the
-campaign's payout wallet, not to users. Paying users on from there would mean
-an executor wallet that custodies USDC, which this service has never done (see
-[No funds at risk](#no-funds-at-risk)). Until that decision is made, the
-scanner only records and alerts; the ledger in Redis is the source of truth
-for manual payouts.
+**Payout.** Prizerail pays prize USDC to the campaign's payout wallet, not to
+users. Set that payout wallet to the executor's **prize wallet**
+(`PRIZE_PAYOUT_EXECUTOR`), and the executor pays each winner from it in the
+chain's USDC (`USDC_BY_CHAIN_ID`). The scanner runs whenever the programme is on:
+
+```
+scanner → ledger row (payout_status = pending | held | unresolved_entrant)
+  └─ enqueue PrizerailPayout (jobId = campaign-drawing-position)
+       └─ prizerailPayoutWorker (concurrency 1 — sole writer to the Prize nonce)
+            ├─ claimPayout: pending → paying  (at-most-once; a lost race is a no-op)
+            ├─ USDC balanceOf(prize) ≥ amount? else release → pending, retry later
+            ├─ safeSend usdc.transfer(wallet, amount)   onSent → tx_hash persisted
+            ├─ confirmed → paid (+ Discord)   reverted/timeout → manual (verify on-chain)
+            └─ retry finds 'paying' + tx_hash → reconcile from the receipt, never re-send
+```
+
+Payout statuses: `pending` (will be paid), `held` (needs a human: Prizerail
+holds it, it is at/above the $20 cap in `PRIZERAIL_POLICY`, or zero),
+`unresolved_entrant` (no wallet in the map), `paying`, `paid`, `manual`
+(sent but unconfirmed/reverted), `failed` (never sent). Only `pending` is ever
+touched automatically; the rest wait for an operator in `prizerail_winners`.
+
+The $20 cap keeps unattended transfers small; it sits far below Prizerail's
+$600 large-prize threshold, past which winners must pass Prizerail's identity
+check, which this executor cannot do. The cap, the
+scan interval and the prize-wallet balance floor are code constants in
+`src/prizerail/config.ts` (`PRIZERAIL_POLICY`) — product rules, changed with
+a review, not per deploy.
+
+**Storage.** The entrant map and the winner ledger live in Postgres
+(`DATABASE_URL`, schema applied at boot: `prizerail_entrants`,
+`prizerail_winners`, `prizerail_drawings_done`). Redis stays queue-only. This
+is the record of money owed — back the database up.
 
 **Operational notes.**
 - `DRY_RUN=true` skips sending entries only with a `pr_prod_*` key. Sandbox
@@ -289,15 +317,15 @@ for manual payouts.
   Discord alert. Retrying is always safe: Prizerail dedupes on `eventId`.
 - A 2xx whose body does not match the expected shape is still a success;
   the entry has landed and the body is only logged.
-- The entrant map (`prizerail:entrants:<slug>`) is the only link from a
-  winner back to a wallet and lives in Redis. It can be rebuilt from order
-  history (wallet → HMAC) as long as the key is unchanged, but back it up
-  with the rest of Redis before enabling production.
-- Winner records are claimed with `HSETNX`, so overlapping scanner ticks or
-  two replicas cannot double-alert. The Discord alert is only marked sent
-  once the webhook accepts every chunk; a lost webhook call is retried on
-  the next tick. A winner whose wallet was unresolved is re-resolved on
-  later ticks if the map is repaired.
+- The entrant map is the only link from a winner back to a wallet. It can be
+  rebuilt from order history (wallet → HMAC) as long as the key is unchanged.
+- Winner rows are inserted once (`ON CONFLICT`), so overlapping scanner ticks
+  or two replicas cannot double-alert or double-pay. The Discord alert is
+  only marked sent once the webhook accepts every chunk. A winner whose
+  wallet was unresolved is re-resolved on later ticks if the map is repaired.
+- Manual payouts: `SELECT * FROM prizerail_winners WHERE payout_status IN
+  ('held','manual','failed','unresolved_entrant')`. After paying by hand,
+  set `payout_status='paid'` and `tx_hash` on the row.
 - The HMAC key is part of the campaign's identity. Rotating it makes every
   wallet a new entrant, breaks guarantee-draw de-duplication, and leaves
   existing winners unresolvable. The scanner raises a Discord alert when a
