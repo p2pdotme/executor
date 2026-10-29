@@ -1,3 +1,5 @@
+import { loadPrizerailConfig, PrizerailConfig } from '../prizerail/config';
+
 export type ExecutorConfig = {
     alchemyApiKey: string;
     diamondAddress: string;
@@ -36,6 +38,11 @@ export type ExecutorConfig = {
     // job at each claim's payoutEligibleAt, and the scanner reconciles any
     // missed/overdue claims via the subgraph.
     insuranceDiamondAddress: string;
+    // Prizerail draw programme (replaces LotPot credit). null = off. When set,
+    // each eligible OrderCompleted also sends draw entries (one per cent of
+    // the cashback-equivalent amount) to the configured campaign. See
+    // prizerail/config.ts for the env contract.
+    prizerail: PrizerailConfig | null;
 };
 
 // Built-in per-currency cashback overrides. These ship as defaults so the
@@ -121,6 +128,7 @@ export function loadExecutorConfig(): ExecutorConfig {
     if (insuranceDiamondAddress && !/^0x[0-9a-fA-F]{40}$/.test(insuranceDiamondAddress)) {
         throw new Error('INSURANCE_DIAMOND_ADDRESS must be a 0x-prefixed 20-byte address');
     }
+    const prizerail = loadPrizerailConfig(process.env);
     return {
         alchemyApiKey,
         diamondAddress,
@@ -136,5 +144,6 @@ export function loadExecutorConfig(): ExecutorConfig {
         cashbackBps,
         cashbackBpsByCurrency,
         insuranceDiamondAddress,
+        prizerail,
     };
 }

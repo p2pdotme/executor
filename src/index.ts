@@ -12,6 +12,8 @@ import { startCashbackWorker } from './queue/workers/cashbackWorker';
 import { startDailyKeeperWorker } from './queue/workers/dailyKeeperWorker';
 import { startCircleRefreshWorker } from './queue/workers/circleRefreshWorker';
 import { startSettleClaimScannerWorker } from './queue/workers/settleClaimScannerWorker';
+import { startPrizerailEntryWorker } from './queue/workers/prizerailEntryWorker';
+import { startPrizerailPayoutScannerWorker } from './queue/workers/prizerailPayoutScannerWorker';
 import { logger } from './helpers/logger';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
 import { startListeners } from './listeners';
@@ -92,6 +94,8 @@ async function start() {
     startDailyKeeperWorker(config, walletManager);
     startCircleRefreshWorker(config);
     startSettleClaimScannerWorker(config); // no-op when INSURANCE_DIAMOND_ADDRESS unset
+    startPrizerailEntryWorker(config); // no-op when PRIZERAIL_API_KEY unset
+    startPrizerailPayoutScannerWorker(config); // no-op unless PRIZERAIL_PAYOUT_SCAN_ENABLED=true
     logger.info('workers started');
 }
 
