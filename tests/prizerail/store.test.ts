@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { PrizerailStore } from './store';
-import type { WinnerRecord } from './winners';
+import { PrizerailStore } from '../../src/prizerail/store';
+import type { WinnerRecord } from '../../src/prizerail/winners';
 
 // Integration test against a real Postgres. Set PRIZERAIL_TEST_DATABASE_URL
 // (e.g. the executor-postgres container) to run; skipped otherwise so the

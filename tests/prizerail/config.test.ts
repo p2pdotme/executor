@@ -6,7 +6,7 @@ import {
     PRIZERAIL_PROD_BASE_URL,
     PRIZERAIL_SANDBOX_BASE_URL,
     resolveUsdcAddress,
-} from './config';
+} from '../../src/prizerail/config';
 
 const VALID = {
     PRIZERAIL_API_KEY: 'pr_sandbox_abc123',

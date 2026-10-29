@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { entrantIdFor, entriesForOrder, MAX_ENTRIES } from './entries';
+import { entrantIdFor, entriesForOrder, MAX_ENTRIES } from '../../src/prizerail/entries';
 
 const KEY = 'test-hmac-key-with-enough-length';
 const ADDR = '0xAbCdEf0000000000000000000000000000000001';

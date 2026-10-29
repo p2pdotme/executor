@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { eventIdForOrder, shouldSkipForDryRun } from './prizerailEntryWorker';
+import { eventIdForOrder, shouldSkipForDryRun } from '../../../src/queue/workers/prizerailEntryWorker';
 
 describe('eventIdForOrder', () => {
     test('namespaces the order id', () => {
