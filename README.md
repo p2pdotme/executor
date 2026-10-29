@@ -144,16 +144,15 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `ALCHEMY_API_KEY` | Alchemy API key for Base mainnet |
 | `DIAMOND_ADDRESS` | Diamond contract address on Base |
 | `FUNDING_EXECUTOR` | Private key of the funding wallet (tops up subwallets) |
+| `DISCORD_ONSUCCESS_WEBHOOK_URL` | Discord webhook — successful tx alerts |
+| `DISCORD_ONFAIL_WEBHOOK_URL` | Discord webhook — failed tx / WS error alerts |
+| `DISCORD_BALANCE_WEBHOOK_URL` | Discord webhook — balance + auto-fund alerts |
 | `ASSIGN_DELAY_IN_SECONDS` | Seconds to wait before assigning merchants after OrderPlaced (e.g. `90`) |
 
 ### Optional
 
 | Variable | Description |
 |---|---|
-| `DISCORD_ONSUCCESS_WEBHOOK_URL` | Discord webhook — successful tx alerts. Unset = logs only (boot warns). Set all three in production. |
-| `DISCORD_ONFAIL_WEBHOOK_URL` | Discord webhook — failed tx / WS error alerts. Unset = logs only. |
-| `DISCORD_BALANCE_WEBHOOK_URL` | Discord webhook — balance + auto-fund alerts. Unset = logs only. |
-| `RPC_HTTP_URL` / `RPC_WS_URL` | Override the Base mainnet Alchemy endpoints, e.g. Base Sepolia or a local fork. |
 | `REDIS_URL` | Default: `redis://redis:6379`. Use `redis://localhost:6379` for local dev |
 | `MIN_BASE_BALANCE_ETH` | Minimum subwallet ETH before auto-fund kicks in (default `0.005`) |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default `info`) |
@@ -162,10 +161,9 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `CASHBACK_INTEGRATOR_ADDRESS` | B2B cashback programme: integrator address to call `issueCredit` on. Leave unset (or set `CASHBACK_BPS=0`) to disable the programme entirely — the OrderCompleted listener silently no-ops. |
 | `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
 | `CASHBACK_BPS_BY_CURRENCY` | Per-currency overrides as `CODE:bps,...`. Built-in: `INR`, `VEN`, `BOB` at 0 (excluded). Also drives Prizerail entry weights. |
-| `PRIZERAIL_API_KEY` | Prizerail draw programme. Unset = off. `pr_sandbox_*` keys target the sandbox, `pr_prod_*` production. |
-| `PRIZERAIL_CAMPAIGN_SLUG` | Required with the key. The campaign that receives entries. |
+| `PRIZERAIL_API_KEY` | Prizerail draw programme. Unset = off. The prefix selects the site: `pr_prod_*` → production (campaign `p2p-ramp`, Base mainnet), `pr_sandbox_*` → sandbox (campaign `p2pme-p2pdotme-orders`, Base Sepolia). See `PRIZERAIL_SITES` in `src/prizerail/config.ts`. |
+| `PRIZERAIL_CAMPAIGN_SLUG` | Optional override of the site's campaign. |
 | `PRIZERAIL_ENTRANT_HMAC_KEY` | Required with the key, ≥ 16 chars. Secret for the pseudonymous entrant id. Never rotate on a live campaign. |
-| `PRIZERAIL_BASE_URL` | Optional override of the API base, derived from the key prefix when unset. |
 | `DATABASE_URL` | Postgres for the Prizerail ledger. Required with the key. |
 
 ### Required — subwallet keys
@@ -260,7 +258,7 @@ OrderCompleted (same filters as cashback: BUY/SELL, non-B2B, rate > 0)
   └─ enqueue SendPrizerailEntry  (jobId = prizerail-<orderId>)
        └─ prizerailEntryWorker
             ├─ entrantId = HMAC-SHA256(PRIZERAIL_ENTRANT_HMAC_KEY, wallet)
-            ├─ HSET prizerail:entrants:<slug> entrantId → wallet   (reverse map for payouts)
+            ├─ INSERT prizerail_entrants (campaign, entrantId → wallet)   (reverse map for payouts)
             └─ POST /campaigns/<slug>/entries  mode=increment  eventId=order-<orderId>
                  (Prizerail ignores repeated eventIds → retries never double-count)
 
