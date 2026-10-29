@@ -38,24 +38,21 @@ export type ExecutorConfig = {
     // job at each claim's payoutEligibleAt, and the scanner reconciles any
     // missed/overdue claims via the subgraph.
     insuranceDiamondAddress: string;
-    // Prizerail draw programme (replaces LotPot credit). null = off. When set,
-    // each eligible OrderCompleted also sends draw entries (one per whole USDC
-    // at the default rate) to the configured campaign. See
-    // prizerail/config.ts for the env contract.
+    // Prizerail draw programme (replaces cashback credit). null = off. When set,
+    // each eligible OrderCompleted also sends draw entries (one per whole
+    // USDC, excluded markets aside) to the site's campaign. Independent of
+    // the cashback rates above. See prizerail/config.ts for the env contract.
     prizerail: PrizerailConfig | null;
 };
 
-// Built-in per-currency rate overrides, merged under CASHBACK_BPS_BY_CURRENCY
-// (env wins per currency). Every other market earns the default. The three
-// markets LotPot excluded stay excluded under the Prizerail draw: India,
-// Venezuela (also on Prizerail's sanctions list) and Bolivia earn nothing.
-// The old ARS/MEX half-rate is gone: it guarded against farming guaranteed
-// credit, and draw entries are proportional, so splitting orders gains nothing.
-// Keep this table in step with the user app's DRAW_ENTRY_PERCENT_BY_CURRENCY.
+// Built-in per-currency cashback overrides. These ship as defaults so the
+// business rule holds even if the operator forgets to set the env var; the
+// CASHBACK_BPS_BY_CURRENCY env (parsed below) takes precedence per currency.
+// ARS (Argentina) and MEX (Mexico) have tighter spreads where users were
+// farming lotpot credits, so both credit 1% (100 bps) vs the default 2%.
 const DEFAULT_CASHBACK_BPS_BY_CURRENCY: Record<string, number> = {
-    INR: 0,
-    VEN: 0,
-    BOB: 0,
+    ARS: 100,
+    MEX: 100,
 };
 
 function requireEnv(name: string): string {

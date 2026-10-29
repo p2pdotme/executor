@@ -6,6 +6,7 @@ import { logger } from '../helpers/logger';
 import { addCashbackJob } from '../queue';
 import { addPrizerailEntryJob } from '../queue/prizerailQueues';
 import { entriesForOrder } from '../prizerail/entries';
+import { isCurrencyExcluded } from '../prizerail/config';
 import {
     anyRatePositive,
     computeCashback,
@@ -61,9 +62,9 @@ const OUTAGE_REMINDER_EVERY = 12;
  * subscribe, so toggling the env on later doesn't need a restart).
  *
  * Prizerail (Nov 2026): the same eligibility rules also feed the Prizerail
- * draw programme that replaces LotPot credit. When PRIZERAIL_API_KEY is set,
+ * draw programme that replaces cashback credit. When PRIZERAIL_API_KEY is set,
  * each eligible order additionally enqueues one SendPrizerailEntry job with
- * one entry per whole USDC at the default rate (see prizerail/entries.ts).
+ * one entry per whole USDC unless the market is excluded (see prizerail/).
  * Both programmes can
  * run side by side during the cutover; each is gated by its own env.
  *
@@ -102,12 +103,14 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
     let consecutiveFailures = 0;
     let outageAlerted = false;
 
-    // Each programme is on when its own target is configured AND at least
-    // one positive rate exists — the default bps or a per-currency override
-    // (an operator may zero the default but still credit one market).
-    const ratePositive = anyRatePositive(config);
-    const cashbackOn = !!config.cashbackIntegratorAddress && ratePositive;
-    const prizerailOn = !!config.prizerail && ratePositive;
+    // Cashback is on when its integrator is configured AND at least one
+    // positive rate exists — the default bps or a per-currency override (an
+    // operator may zero the default but still credit one market). Prizerail
+    // is on whenever its key is set: its rule (one entry per whole USDC,
+    // minus the site's excluded markets) does not use the cashback rates.
+    const cashbackOn = !!config.cashbackIntegratorAddress && anyRatePositive(config);
+    const prizerail = config.prizerail;
+    const prizerailOn = !!prizerail;
     const programmeOn = cashbackOn || prizerailOn;
     if (!programmeOn) {
         logger.info(
@@ -173,22 +176,21 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             const orderType = Number(order.orderType);
             if (orderType !== ORDER_TYPE_BUY && orderType !== ORDER_TYPE_SELL) return;
 
-            // Resolve the rate per the order's currency, falling back to the
-            // default bps (per-market overrides come from CASHBACK_BPS_BY_CURRENCY).
             const currencyCode = decodeCurrency(order.currency);
-            const bps = resolveCashbackBps(config, currencyCode);
-            if (bps <= 0) {
-                logger.debug(
-                    `OrderCompleted: orderId=${orderId} currency=${currencyCode || 'n/a'} → 0 bps rate, skipping`,
-                );
-                return;
-            }
-
             const amount: bigint = order.amount;
-            const cashback = computeCashback(amount, bps);
-            if (cashback <= 0n) {
+
+            // Cashback: rate per the order's currency, falling back to the
+            // default bps (per-market overrides come from CASHBACK_BPS_BY_CURRENCY).
+            const bps = cashbackOn ? resolveCashbackBps(config, currencyCode) : 0;
+            const cashback = bps > 0 ? computeCashback(amount, bps) : 0n;
+
+            // Prizerail: one entry per whole USDC unless the market is excluded.
+            const excluded = !!prizerail && isCurrencyExcluded(prizerail, currencyCode);
+            const entries = prizerail && !excluded ? entriesForOrder(amount) : 0;
+
+            if (cashback <= 0n && entries <= 0) {
                 logger.debug(
-                    `OrderCompleted: orderId=${orderId} amount=${amount} → 0 cashback after bps, skipping`,
+                    `OrderCompleted: orderId=${orderId} amount=${amount} currency=${currencyCode || 'n/a'} → nothing to do (cashback bps=${bps}, draw ${excluded ? 'market excluded' : '0 entries'}), skipping`,
                 );
                 return;
             }
@@ -217,10 +219,10 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
 
             const orderTypeLabel = orderType === ORDER_TYPE_BUY ? 'BUY' : 'SELL';
             logger.info(
-                `OrderCompleted (eligible ${orderTypeLabel}, ${source}): orderId=${orderId} user=${user} amount=${amount} currency=${currencyCode || 'n/a'} bps=${bps} cashback=${cashback} txHash=${txHash}`,
+                `OrderCompleted (eligible ${orderTypeLabel}, ${source}): orderId=${orderId} user=${user} amount=${amount} currency=${currencyCode || 'n/a'} cashback=${cashback} (bps=${bps}) entries=${entries} txHash=${txHash}`,
             );
 
-            if (cashbackOn) {
+            if (cashback > 0n) {
                 await addCashbackJob(
                     'IssueCashbackCredit',
                     {
@@ -232,19 +234,12 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                 );
             }
 
-            if (prizerailOn) {
-                const entries = entriesForOrder(amount, bps);
-                if (entries > 0) {
-                    await addPrizerailEntryJob({
-                        orderId: String(orderId),
-                        user: String(user),
-                        entries,
-                    });
-                } else {
-                    logger.debug(
-                        `OrderCompleted: orderId=${orderId} amount=${amount} bps=${bps} → 0 draw entries, skipping prizerail`,
-                    );
-                }
+            if (entries > 0) {
+                await addPrizerailEntryJob({
+                    orderId: String(orderId),
+                    user: String(user),
+                    entries,
+                });
             }
         } catch (err: any) {
             logger.error(

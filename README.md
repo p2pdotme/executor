@@ -65,8 +65,8 @@ The executor:
 1. **Event listening** — Subscribes to the Diamond contract on Base (WebSocket). On `OrderPlaced`, immediately enqueues `ToggleMerchantsOffline` and enqueues `AssignMerchants` after a configurable delay. On `OrderCompleted` (when the B2B cashback programme is enabled), enqueues `IssueCashbackCredit` for eligible non-B2B BUY and SELL orders.
 2. **Order sweeper** — Every 1 minute: batch-checks all tracked orders via Multicall3, untracking completed/cancelled ones and auto-cancelling expired ones.
 3. **Order scanner** — Every 1 hour: rescans the last 2 500 blocks to catch any orders the WS listener may have missed.
-4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`). Being retired with LotPot (Nov 2026).
-5. **Prizerail draw programme** — Opt-in via env. Same eligibility rules and rates as the cashback programme, but instead of credit the user earns entries into a [Prizerail](https://docs.prizerail.com/) prize draw: one entry per whole USDC at the default rate (a $50 order = 50 entries), posted over HTTPS (no wallet, no tx). An optional scanner ledgers winners and posts them to Discord. See [Prizerail draw programme](#prizerail-draw-programme).
+4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`).
+5. **Prizerail draw programme** — Opt-in via env. Same eligibility as the cashback programme (completed non-B2B BUY/SELL), but instead of credit the user earns entries into a [Prizerail](https://docs.prizerail.com/) prize draw: one entry per whole USDC (a $50 order = 50 entries), with INR, VEN and BOB excluded in production, posted over HTTPS (no wallet, no tx). An optional scanner ledgers winners and posts them to Discord. See [Prizerail draw programme](#prizerail-draw-programme).
 6. **Auto-funded wallets** — Five subwallets (toggle, assign, sweeper, cashback, keeper) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
 7. **Liveness probe** — `GET /healthz` and nothing else. There is no API.
 
@@ -160,7 +160,7 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `PORT` | HTTP port (default `8000`) |
 | `CASHBACK_INTEGRATOR_ADDRESS` | B2B cashback programme: integrator address to call `issueCredit` on. Leave unset (or set `CASHBACK_BPS=0`) to disable the programme entirely — the OrderCompleted listener silently no-ops. |
 | `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
-| `CASHBACK_BPS_BY_CURRENCY` | Per-currency overrides as `CODE:bps,...`. Built-in: `INR`, `VEN`, `BOB` at 0 (excluded). Also drives Prizerail entry weights. |
+| `CASHBACK_BPS_BY_CURRENCY` | B2B cashback programme: per-currency overrides as `CODE:bps,...`. Built-in: `ARS` and `MEX` at 100. Not used by Prizerail. |
 | `PRIZERAIL_API_KEY` | Prizerail draw programme. Unset = off. The prefix selects the site: `pr_prod_*` → production (campaign `p2p-ramp`, Base mainnet), `pr_sandbox_*` → sandbox (campaign `p2pme-p2pdotme-orders`, Base Sepolia). See `PRIZERAIL_SITES` in `src/prizerail/config.ts`. |
 | `PRIZERAIL_CAMPAIGN_SLUG` | Optional override of the site's campaign. |
 | `PRIZERAIL_ENTRANT_HMAC_KEY` | Required with the key, ≥ 16 chars. Secret for the pseudonymous entrant id. Never rotate on a live campaign. |
@@ -248,13 +248,13 @@ Every 1 hour — OrderScanner
 
 ### Prizerail draw programme
 
-Replaces the LotPot credit cashback from November 2026. Nothing about *who* is
+Replaces the per-order cashback credit from November 2026. Nothing about *who* is
 eligible changes — only *what* they get.
 
 ```
 OrderCompleted (same filters as cashback: BUY/SELL, non-B2B, rate > 0)
   └─ cashback = amount × bps / 10 000            (per-currency bps via env, default 2%)
-  └─ entries  = whole USDC × bps / 200          (2% → 1 entry per $1; 0 → skip)
+  └─ entries  = whole USDC                       (0 for the site's excluded markets: prod INR/VEN/BOB)
   └─ enqueue SendPrizerailEntry  (jobId = prizerail-<orderId>)
        └─ prizerailEntryWorker
             ├─ entrantId = HMAC-SHA256(PRIZERAIL_ENTRANT_HMAC_KEY, wallet)

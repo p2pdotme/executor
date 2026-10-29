@@ -4,20 +4,36 @@
 // the prize wallet must be on. PRIZERAIL_CAMPAIGN_SLUG can still point a
 // sandbox run at a different sandbox campaign.
 export type PrizerailSite = 'prod' | 'sandbox';
-export const PRIZERAIL_SITES: Readonly<
-    Record<PrizerailSite, { baseUrl: string; campaignSlug: string; chainId: number }>
-> = {
+export type PrizerailSiteConfig = {
+    baseUrl: string;
+    campaignSlug: string;
+    chainId: number;
+    // Markets that earn no draw entries. Every other market earns one entry
+    // per whole USDC (see prizerail/entries.ts). Independent of the cashback
+    // rates in CASHBACK_BPS / CASHBACK_BPS_BY_CURRENCY.
+    excludedCurrencies: ReadonlySet<string>;
+};
+export const PRIZERAIL_SITES: Readonly<Record<PrizerailSite, PrizerailSiteConfig>> = {
     prod: {
         baseUrl: 'https://www.prizerail.com/api/v1',
         campaignSlug: 'p2p-ramp', // https://www.prizerail.com/campaigns/p2p-ramp
         chainId: 8453, // Base mainnet
+        // India, Venezuela (also on Prizerail's sanctions list) and Bolivia.
+        // Keep in step with the user app's list.
+        excludedCurrencies: new Set(['INR', 'VEN', 'BOB']),
     },
     sandbox: {
         baseUrl: 'https://sandbox.prizerail.com/api/v1',
-        campaignSlug: 'p2pme-p2pdotme-orders', // https://sandbox.prizerail.com/campaigns/p2pme-p2pdotme-orders
+        campaignSlug: 'p2p-ramp', // https://sandbox.prizerail.com/campaigns/p2p-ramp
         chainId: 84532, // Base Sepolia
+        // Fake prizes: every market may test, including the ones excluded in prod.
+        excludedCurrencies: new Set(),
     },
 };
+
+export function isCurrencyExcluded(site: Pick<PrizerailSiteConfig, 'excludedCurrencies'>, currencyCode: string): boolean {
+    return site.excludedCurrencies.has(currencyCode.trim().toUpperCase());
+}
 export const PRIZERAIL_PROD_BASE_URL = PRIZERAIL_SITES.prod.baseUrl;
 export const PRIZERAIL_SANDBOX_BASE_URL = PRIZERAIL_SITES.sandbox.baseUrl;
 
@@ -66,6 +82,7 @@ export type PrizerailConfig = {
     // on any other chain, so a sandbox key can never drive mainnet USDC and a
     // prod key can never pay real winners in test tokens.
     chainId: number;
+    excludedCurrencies: ReadonlySet<string>;
     // Secret for the entrant-id HMAC. Fixed for the campaign's life — see
     // prizerail/entries.ts.
     entrantHmacKey: string;
@@ -126,6 +143,7 @@ export function loadPrizerailConfig(env: Env): PrizerailConfig | null {
         baseUrl: PRIZERAIL_SITES[site].baseUrl,
         isSandbox,
         chainId: PRIZERAIL_SITES[site].chainId,
+        excludedCurrencies: PRIZERAIL_SITES[site].excludedCurrencies,
         entrantHmacKey,
         databaseUrl,
         payoutEnabled: !!trimmed(env, 'PRIZE_PAYOUT_EXECUTOR'),
