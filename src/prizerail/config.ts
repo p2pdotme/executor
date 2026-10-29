@@ -23,7 +23,7 @@ export const PRIZERAIL_SITES: Readonly<Record<PrizerailSite, PrizerailSiteConfig
     },
     sandbox: {
         baseUrl: 'https://sandbox.prizerail.com/api/v1',
-        campaignSlug: 'p2p-ramp', // https://sandbox.prizerail.com/campaigns/p2p-ramp
+        campaignSlug: 'p2pme-p2pdotme-orders', // https://sandbox.prizerail.com/campaigns/p2pme-p2pdotme-orders
         chainId: 84532, // Base Sepolia
         // Fake prizes: every market may test, including the ones excluded in prod.
         excludedCurrencies: new Set(),
