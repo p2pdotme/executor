@@ -11,7 +11,6 @@ import {
 
 const VALID = {
     PRIZERAIL_API_KEY: 'pr_sandbox_abc123',
-    PRIZERAIL_CAMPAIGN_SLUG: 'p2p-daily',
     PRIZERAIL_ENTRANT_HMAC_KEY: 'a-sufficiently-long-secret-value',
     DATABASE_URL: 'postgres://u:p@localhost:5432/executor',
 };
@@ -52,17 +51,16 @@ describe('loadPrizerailConfig', () => {
         expect(isCurrencyExcluded(sandbox, 'INR')).toBe(false);
     });
 
-    test('defaults the campaign per site when no slug is set', () => {
-        const { PRIZERAIL_CAMPAIGN_SLUG: _unset, ...withoutSlug } = VALID;
-        expect(loadPrizerailConfig(withoutSlug)?.campaignSlug).toBe(PRIZERAIL_SITES.sandbox.campaignSlug);
-        expect(
-            loadPrizerailConfig({ ...withoutSlug, PRIZERAIL_API_KEY: 'pr_prod_xyz' })?.campaignSlug,
-        ).toBe(PRIZERAIL_SITES.prod.campaignSlug);
-        expect(PRIZERAIL_SITES.prod.campaignSlug).toBe('p2p-ramp');
-        expect(loadPrizerailConfig({ ...VALID, PRIZERAIL_CAMPAIGN_SLUG: '  ' })?.campaignSlug).toBe(
-            PRIZERAIL_SITES.sandbox.campaignSlug,
+    test('the campaign comes from the site, never from env', () => {
+        expect(loadPrizerailConfig(VALID)?.campaignSlug).toBe(PRIZERAIL_SITES.sandbox.campaignSlug);
+        expect(loadPrizerailConfig({ ...VALID, PRIZERAIL_API_KEY: 'pr_prod_xyz' })?.campaignSlug).toBe(
+            PRIZERAIL_SITES.prod.campaignSlug,
         );
-        expect(loadPrizerailConfig(VALID)?.campaignSlug).toBe('p2p-daily');
+        expect(PRIZERAIL_SITES.prod.campaignSlug).toBe('p2p-ramp');
+        expect(PRIZERAIL_SITES.sandbox.campaignSlug).toBe('p2pme-p2pdotme-orders');
+        expect(
+            loadPrizerailConfig({ ...VALID, PRIZERAIL_CAMPAIGN_SLUG: 'something-else' })?.campaignSlug,
+        ).toBe(PRIZERAIL_SITES.sandbox.campaignSlug);
     });
 
     test('requires the HMAC key once the API key is set', () => {
@@ -74,12 +72,6 @@ describe('loadPrizerailConfig', () => {
     test('rejects a short HMAC key', () => {
         expect(() => loadPrizerailConfig({ ...VALID, PRIZERAIL_ENTRANT_HMAC_KEY: 'short' })).toThrow(
             /at least/,
-        );
-    });
-
-    test('rejects a malformed slug', () => {
-        expect(() => loadPrizerailConfig({ ...VALID, PRIZERAIL_CAMPAIGN_SLUG: 'Bad Slug!' })).toThrow(
-            /PRIZERAIL_CAMPAIGN_SLUG/,
         );
     });
 
