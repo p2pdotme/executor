@@ -162,7 +162,6 @@ Copy `.env.example` to `.env` for local dev. In production set these in the plat
 | `CASHBACK_BPS` | B2B cashback programme: bps of each completed non-B2B BUY or SELL amount to credit (e.g. `200` = 2%). Range `[0, 10000]`. `0` disables the programme. |
 | `CASHBACK_BPS_BY_CURRENCY` | B2B cashback programme: per-currency overrides as `CODE:bps,...`. Built-in: `ARS` and `MEX` at 100. Not used by Prizerail. |
 | `PRIZERAIL_API_KEY` | Prizerail draw programme. Unset = off. The prefix selects the site: `pr_prod_*` → production (campaign `p2p-ramp`, Base mainnet), `pr_sandbox_*` → sandbox (campaign `p2pme-p2pdotme-orders`, Base Sepolia). See `PRIZERAIL_SITES` in `src/prizerail/config.ts`. |
-| `PRIZERAIL_CAMPAIGN_SLUG` | Optional override of the site's campaign. |
 | `PRIZERAIL_ENTRANT_HMAC_KEY` | Required with the key, ≥ 16 chars. Secret for the pseudonymous entrant id. Never rotate on a live campaign. |
 | `DATABASE_URL` | Postgres for the Prizerail ledger. Required with the key. |
 

@@ -1,8 +1,7 @@
 // One Prizerail site per deployment: production pays real USDC on Base
 // mainnet; the sandbox fakes payouts and pairs with Base Sepolia. The API
 // key prefix picks the site, and the site fixes the campaign and the chain
-// the prize wallet must be on. PRIZERAIL_CAMPAIGN_SLUG can still point a
-// sandbox run at a different sandbox campaign.
+// the prize wallet must be on. Nothing about the site comes from env.
 export type PrizerailSite = 'prod' | 'sandbox';
 export type PrizerailSiteConfig = {
     baseUrl: string;
@@ -40,7 +39,6 @@ export const PRIZERAIL_SANDBOX_BASE_URL = PRIZERAIL_SITES.sandbox.baseUrl;
 const SANDBOX_KEY_PREFIX = 'pr_sandbox_';
 const PROD_KEY_PREFIX = 'pr_prod_';
 const MIN_HMAC_KEY_LENGTH = 16;
-const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 // USDC contract per chain id. Resolved from the RPC's chain at startup, so
 // the same build pays in the right token on mainnet and on Sepolia without
@@ -118,10 +116,6 @@ export function loadPrizerailConfig(env: Env): PrizerailConfig | null {
     }
 
     const site: PrizerailSite = isSandbox ? 'sandbox' : 'prod';
-    const campaignSlug = trimmed(env, 'PRIZERAIL_CAMPAIGN_SLUG') || PRIZERAIL_SITES[site].campaignSlug;
-    if (!SLUG_PATTERN.test(campaignSlug)) {
-        throw new Error('PRIZERAIL_CAMPAIGN_SLUG must be a lowercase slug');
-    }
 
     const entrantHmacKey = trimmed(env, 'PRIZERAIL_ENTRANT_HMAC_KEY');
     if (!entrantHmacKey) {
@@ -139,7 +133,7 @@ export function loadPrizerailConfig(env: Env): PrizerailConfig | null {
     return {
         apiKey,
         site,
-        campaignSlug,
+        campaignSlug: PRIZERAIL_SITES[site].campaignSlug,
         baseUrl: PRIZERAIL_SITES[site].baseUrl,
         isSandbox,
         chainId: PRIZERAIL_SITES[site].chainId,
