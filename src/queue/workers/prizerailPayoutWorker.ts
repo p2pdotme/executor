@@ -145,14 +145,26 @@ export async function payWinner(d: PayoutDeps, data: PrizerailPayoutJobData): Pr
     const row = await d.store.claimPayout(campaign, drawingId, position);
     if (!row || !row.wallet) return; // lost the race or wallet vanished
 
-    if (!(await ensureBalance(d, amount))) {
+    // Nothing has been broadcast yet, so an RPC blip on these reads releases
+    // the claim. Left 'paying' with no nonce, the retry would set it to manual.
+    let funded: boolean;
+    let nonce: number;
+    try {
+        funded = await ensureBalance(d, amount);
+        nonce = await d.minedNonce(d.prizeAddress);
+    } catch (err: unknown) {
+        await d.store.releaseClaim(campaign, drawingId, position, `pre-send RPC read failed: ${(err as Error)?.message ?? err}`);
+        throw err; // retry with backoff
+    }
+
+    if (!funded) {
         await d.store.releaseClaim(campaign, drawingId, position, 'insufficient USDC in prize wallet');
         throw new Error('prize wallet has insufficient USDC'); // retry with backoff
     }
 
     // Nonce snapshot BEFORE broadcast: the only way to tell "never sent" from
     // "sent but the RPC lost the hash" if we die or error mid-send.
-    await d.store.recordSendNonce(campaign, drawingId, position, await d.minedNonce(d.prizeAddress));
+    await d.store.recordSendNonce(campaign, drawingId, position, nonce);
 
     let sentHash: string | null = null;
     let ok: boolean;
@@ -237,7 +249,18 @@ export async function startPrizerailPayoutWorker(config: ExecutorConfig, walletM
     }
 
     initPrizerailPayoutQueue();
-    const deps = await buildDeps(config, prizerail, walletManager);
+    // A chain mismatch or slow RPC must not take down core jobs: skip payouts
+    // for this run. Winners stay 'pending' in the ledger and are paid once a
+    // restart starts the worker.
+    let deps: PayoutDeps;
+    try {
+        deps = await buildDeps(config, prizerail, walletManager);
+    } catch (err: unknown) {
+        const msg = `prizerail-payout: NOT started (${(err as Error)?.message ?? err}) — entries and winner discovery keep running; payouts resume after a restart`;
+        logger.error(msg);
+        await sendOnFail(config, `⚠️ ${msg}`).catch(() => {});
+        return;
+    }
 
     const worker = new Worker<PrizerailPayoutJobData>(
         PRIZERAIL_PAYOUT_QUEUE_NAME,

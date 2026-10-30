@@ -15,18 +15,24 @@ This means anyone in the community can run an executor to help operate the proto
 
 The only exception is the optional **B2B Cashback** program, which requires an issuer to be whitelisted via `setCreditIssuer`. Community-operated executors can simply leave this feature disabled.
 
-## No funds at risk
+## Funds at risk
 
 The executor never custodys user funds.
 
 It:
-- Holds no USDC.
+- Holds no user funds.
 - Holds no merchant stake.
 - Has no token approvals.
 
-Its wallets are used only to pay Base network gas fees.
+Its core wallets are used only to pay Base network gas fees.
 
-Operators generate all six wallets themselves (five executor wallets and one funding wallet), fund the `FUNDING_EXECUTOR` wallet with a small amount of ETH, and the executor automatically distributes gas to the remaining wallets as needed. The only funds at risk are this gas balance.
+Operators generate all six wallets themselves (five executor wallets and one funding wallet), fund the `FUNDING_EXECUTOR` wallet with a small amount of ETH, and the executor automatically distributes gas to the remaining wallets as needed. Without Prizerail payouts, the only funds at risk are this gas balance.
+
+**Exception — the optional prize wallet.** When `PRIZE_PAYOUT_EXECUTOR` is set, that wallet **holds USDC**: Prizerail sends each draw's prize USDC to it, and the executor pays winners from it. Those prizes are funds at risk if the key leaks. To limit the exposure:
+- Use a dedicated wallet for it, never one of the executor wallets above, and keep only what upcoming payouts need.
+- It only sends USDC `transfer`s to winners recorded in the Postgres ledger; it grants no approvals.
+- Automatic payouts are capped (`PRIZERAIL_POLICY.maxAutoPayoutCents`): a prize of $20 or more is held for a manual payout.
+- Leave `PRIZE_PAYOUT_EXECUTOR` unset to keep every executor wallet gas-only.
 
 ## No keys at risk
 
@@ -320,9 +326,7 @@ is the record of money owed — back the database up.
   or two replicas cannot double-alert or double-pay. The Discord alert is
   only marked sent once the webhook accepts every chunk. A winner whose
   wallet was unresolved is re-resolved on later ticks if the map is repaired.
-- Manual payouts: `SELECT * FROM prizerail_winners WHERE payout_status IN
-  ('held','manual','failed','unresolved_entrant')`. After paying by hand,
-  set `payout_status='paid'` and `tx_hash` on the row.
+- Manual payouts: see **Paying held winners** below.
 - The HMAC key is part of the campaign's identity. Rotating it makes every
   wallet a new entrant, breaks guarantee-draw de-duplication, and leaves
   existing winners unresolvable. The scanner raises a Discord alert when a
@@ -330,6 +334,66 @@ is the record of money owed — back the database up.
 - Prizerail's eligibility rules (age, excluded US states, OFAC) are not
   enforced here. The order carries only a currency; filtering by residency
   has to happen upstream of `OrderCompleted` or be agreed with Prizerail.
+
+**Paying held winners.** Rows that need a human are listed by the Discord
+winners alert and by this query (`psql "$DATABASE_URL"`):
+
+```sql
+SELECT drawing_id, position, wallet, amount_cents, payout_status,
+       held_for_manual_payout, hold_reason, tx_hash, last_error
+FROM prizerail_winners
+WHERE campaign = 'p2p-ramp'
+  AND payout_status IN ('held', 'manual', 'failed', 'unresolved_entrant')
+ORDER BY draw_at;
+```
+
+Every `UPDATE` below names one row by `(campaign, drawing_id, position)` and
+repeats the status it expects, so it must report `UPDATE 1`. `UPDATE 0` means
+the row moved on: re-run the query, do not widen the `WHERE`.
+
+- **`held`, over the $20 cap — let the executor pay it.** Check the wallet
+  and amount, then approve it. The next scan (within 5 min) queues it and the
+  payout worker sends the full amount from the prize wallet with the usual
+  at-most-once checks. The cap is applied only when a winner is first
+  recorded, so an approved row is not held again.
+
+  ```sql
+  UPDATE prizerail_winners
+  SET payout_status = 'pending', last_error = 'approved for auto-pay by <name>', updated_at = now()
+  WHERE campaign = 'p2p-ramp' AND drawing_id = '<id>' AND position = <n>
+    AND payout_status = 'held' AND held_for_manual_payout = false AND wallet IS NOT NULL;
+  ```
+
+- **`held` with `held_for_manual_payout = true` — Prizerail is holding it**
+  (identity check, review). Do not approve it here; resolve it in the
+  Prizerail portal. If Prizerail later releases the prize, pay it by hand.
+
+- **Paying by hand** (any `held` row, or when the executor is not running):
+  send `amount_cents / 100` USDC from the prize wallet to `wallet`, then record
+  the transfer. Without this the row keeps showing up as owed.
+
+  ```sql
+  UPDATE prizerail_winners
+  SET payout_status = 'paid', tx_hash = '<0x…>', paid_at = now(),
+      last_error = 'paid by hand by <name>', updated_at = now()
+  WHERE campaign = 'p2p-ramp' AND drawing_id = '<id>' AND position = <n>
+    AND payout_status IN ('held', 'manual', 'failed');
+  ```
+
+- **`manual` — a transfer may have gone out.** Look up `tx_hash` on Basescan
+  (or, with no hash, the prize wallet's transfers after `updated_at`). If it
+  succeeded, mark it `paid` with that hash as above. Only when you are sure
+  nothing was sent, set it back to `pending` to retry. Never retry a `manual`
+  row without checking the chain: that can pay the winner twice.
+
+- **`failed` — rejected before broadcast** (presim or send error, see the
+  fail channel). Fix the cause (usually gas or USDC in the prize wallet),
+  then set it back to `pending` with the first `UPDATE` (status `'failed'`).
+
+- **`unresolved_entrant` — no wallet for the entrant id.** Usually a changed
+  `PRIZERAIL_ENTRANT_HMAC_KEY`. Restore the key; the scanner re-resolves the
+  row on its next pass while the drawing is not yet `paid`. Otherwise find the
+  wallet from order history and pay by hand.
 
 ### All contract writes
 
