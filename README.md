@@ -335,65 +335,43 @@ is the record of money owed — back the database up.
   enforced here. The order carries only a currency; filtering by residency
   has to happen upstream of `OrderCompleted` or be agreed with Prizerail.
 
-**Paying held winners.** Rows that need a human are listed by the Discord
-winners alert and by this query (`psql "$DATABASE_URL"`):
+**Paying held winners.** Rows the worker leaves to a human are listed in the
+Discord winners alert. Manage them with the operator script, which reads the
+executor's env (`PRIZERAIL_API_KEY` picks the site and campaign,
+`DATABASE_URL` the ledger, `ALCHEMY_API_KEY` or `RPC_HTTP_URL` the chain):
 
-```sql
-SELECT drawing_id, position, wallet, amount_cents, payout_status,
-       held_for_manual_payout, hold_reason, tx_hash, last_error
-FROM prizerail_winners
-WHERE campaign = 'p2p-ramp'
-  AND payout_status IN ('held', 'manual', 'failed', 'unresolved_entrant')
-ORDER BY draw_at;
+```
+bun run prizerail:payout list                                # local
+bun dist/scripts/prizerailPayout.js list                     # in the deployed image
+bun run prizerail:payout approve   <drawingId> <position>
+bun run prizerail:payout retry     <drawingId> <position>
+bun run prizerail:payout mark-paid <drawingId> <position> <txHash>
 ```
 
-Every `UPDATE` below names one row by `(campaign, drawing_id, position)` and
-repeats the status it expects, so it must report `UPDATE 1`. `UPDATE 0` means
-the row moved on: re-run the query, do not widen the `WHERE`.
+The script never sends USDC. Each command names one row, checks its status
+first, and refuses if the row moved on in the meantime. Your OS user name (or
+`PRIZERAIL_OPERATOR`) is written to `last_error` as an audit note.
 
-- **`held`, over the $20 cap — let the executor pay it.** Check the wallet
-  and amount, then approve it. The next scan (within 5 min) queues it and the
-  payout worker sends the full amount from the prize wallet with the usual
-  at-most-once checks. The cap is applied only when a winner is first
-  recorded, so an approved row is not held again.
-
-  ```sql
-  UPDATE prizerail_winners
-  SET payout_status = 'pending', last_error = 'approved for auto-pay by <name>', updated_at = now()
-  WHERE campaign = 'p2p-ramp' AND drawing_id = '<id>' AND position = <n>
-    AND payout_status = 'held' AND held_for_manual_payout = false AND wallet IS NOT NULL;
-  ```
-
-- **`held` with `held_for_manual_payout = true` — Prizerail is holding it**
-  (identity check, review). Do not approve it here; resolve it in the
-  Prizerail portal. If Prizerail later releases the prize, pay it by hand.
-
-- **Paying by hand** (any `held` row, or when the executor is not running):
-  send `amount_cents / 100` USDC from the prize wallet to `wallet`, then record
-  the transfer. Without this the row keeps showing up as owed.
-
-  ```sql
-  UPDATE prizerail_winners
-  SET payout_status = 'paid', tx_hash = '<0x…>', paid_at = now(),
-      last_error = 'paid by hand by <name>', updated_at = now()
-  WHERE campaign = 'p2p-ramp' AND drawing_id = '<id>' AND position = <n>
-    AND payout_status IN ('held', 'manual', 'failed');
-  ```
-
-- **`manual` — a transfer may have gone out.** Look up `tx_hash` on Basescan
-  (or, with no hash, the prize wallet's transfers after `updated_at`). If it
-  succeeded, mark it `paid` with that hash as above. Only when you are sure
-  nothing was sent, set it back to `pending` to retry. Never retry a `manual`
-  row without checking the chain: that can pay the winner twice.
-
-- **`failed` — rejected before broadcast** (presim or send error, see the
-  fail channel). Fix the cause (usually gas or USDC in the prize wallet),
-  then set it back to `pending` with the first `UPDATE` (status `'failed'`).
-
-- **`unresolved_entrant` — no wallet for the entrant id.** Usually a changed
-  `PRIZERAIL_ENTRANT_HMAC_KEY`. Restore the key; the scanner re-resolves the
-  row on its next pass while the drawing is not yet `paid`. Otherwise find the
-  wallet from order history and pay by hand.
+- **`held`, over the $20 cap:** `approve` it. The next scan (within 5 min)
+  queues it, and the payout worker sends the full amount from the prize wallet
+  with the usual at-most-once checks. The cap is only applied when a winner is
+  first recorded, so an approved row is not held again.
+- **`held` by Prizerail** (identity check, review; `list` shows it): `approve`
+  refuses. Resolve it in the Prizerail portal, then pay by hand.
+- **Paid by hand** (any `held`, `manual` or `failed` row): send
+  `amount_cents / 100` USDC from the prize wallet to the winner, then
+  `mark-paid` with the tx hash. It records the row only if that transaction
+  succeeded on the site's chain, contains a USDC transfer of exactly the prize
+  to the winner's wallet, and is not already recorded for another winner.
+- **`manual`, a transfer may have gone out:** find it (the row's `tx_hash`, or
+  the prize wallet's transfers after the claim) and `mark-paid` it. There is
+  deliberately no retry for `manual`, because retrying blind can pay twice.
+- **`failed`, rejected before broadcast:** fix the cause (usually gas or USDC
+  in the prize wallet), then `retry`.
+- **`unresolved_entrant`, no wallet for the entrant id:** usually a changed
+  `PRIZERAIL_ENTRANT_HMAC_KEY`. Restore the key and the scanner re-resolves the
+  row while the drawing is not yet `paid`. Otherwise find the wallet from order
+  history and fix the row in SQL.
 
 ### All contract writes
 

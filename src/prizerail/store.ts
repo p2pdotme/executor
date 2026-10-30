@@ -268,6 +268,60 @@ export class PrizerailStore {
         await this.setStatus(campaign, drawingId, position, 'paying', 'failed', { last_error: reason });
     }
 
+    // ── operator moves (scripts/prizerail-payout) ───────────────────────
+    // Each returns false when the row is no longer in the expected status.
+
+    /** Rows a human has to act on, oldest first. */
+    async listNeedsAttention(campaign: string, limit: number): Promise<WinnerRow[]> {
+        const res = await this.pool.query<RawRow>(
+            `${SELECT_ROW}
+             WHERE campaign = $1 AND payout_status IN ('held', 'manual', 'failed', 'unresolved_entrant')
+             ORDER BY draw_at ASC, position ASC
+             LIMIT $2`,
+            [campaign, limit],
+        );
+        return res.rows.map(toRow);
+    }
+
+    /** Other rows already recorded as paid by this transfer. */
+    async findPaidByTxHash(campaign: string, txHash: string): Promise<WinnerRow[]> {
+        const res = await this.pool.query<RawRow>(
+            `${SELECT_ROW} WHERE campaign = $1 AND lower(tx_hash) = lower($2) AND payout_status = 'paid'`,
+            [campaign, txHash],
+        );
+        return res.rows.map(toRow);
+    }
+
+    /** held → pending: the payout worker pays it on the next scan. */
+    async approveHeld(campaign: string, drawingId: string, position: number, note: string): Promise<boolean> {
+        return this.setStatus(campaign, drawingId, position, 'held', 'pending', { last_error: note });
+    }
+
+    /** failed → pending. Only for rows that were never broadcast. */
+    async retryFailed(campaign: string, drawingId: string, position: number, note: string): Promise<boolean> {
+        return this.setStatus(campaign, drawingId, position, 'failed', 'pending', {
+            last_error: note,
+            send_nonce: null,
+            tx_hash: null,
+        });
+    }
+
+    /** held | manual | failed → paid, for a transfer verified on-chain. */
+    async markPaidByHand(
+        campaign: string,
+        drawingId: string,
+        position: number,
+        from: PayoutStatus,
+        txHash: string,
+        note: string,
+    ): Promise<boolean> {
+        return this.setStatus(campaign, drawingId, position, from, 'paid', {
+            tx_hash: txHash,
+            paid_at: new Date().toISOString(),
+            last_error: note,
+        });
+    }
+
     private async setStatus(
         campaign: string,
         drawingId: string,
@@ -275,18 +329,19 @@ export class PrizerailStore {
         from: PayoutStatus,
         to: PayoutStatus,
         extra: Record<string, string | number | null>,
-    ): Promise<void> {
+    ): Promise<boolean> {
         const params: unknown[] = [campaign, drawingId, position, to, from];
         const assigns = Object.entries(extra).map(([col, value]) => {
             params.push(value);
             return `${col} = $${params.length}`;
         });
-        await this.pool.query(
+        const res = await this.pool.query(
             `UPDATE prizerail_winners
              SET payout_status = $4, updated_at = now()${assigns.length ? `, ${assigns.join(', ')}` : ''}
              WHERE campaign = $1 AND drawing_id = $2 AND position = $3 AND payout_status = $5`,
             params,
         );
+        return res.rowCount === 1;
     }
 
     // ── drawings ────────────────────────────────────────────────────────

@@ -9,7 +9,8 @@
         "build": "tsc -p tsconfig.json",
         "start": "bun dist/index.js",
         "test": "bun test",
-        "typecheck": "tsc --noEmit -p tsconfig.json"
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "prizerail:payout": "bun src/scripts/prizerailPayout.ts"
     },
     "dependencies": {
         "bullmq": "^5.63.1",
