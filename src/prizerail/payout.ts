@@ -26,8 +26,8 @@ export type PayoutCandidate = {
 const USDC_UNITS_PER_CENT = 10_000n;
 
 /**
- * Classify a winner for payout. `maxAutoPayoutCents` is the ceiling for an
- * unattended transfer: at or above it the prize stays with a human, which
+ * Classify a winner for payout. `maxAutoPayoutCents` is the largest
+ * unattended transfer: above it the prize stays with a human, which
  * also lines up with Prizerail's identity check for winners crossing the
  * large-prize threshold (default $600). A cap of 0 disables auto-payout.
  */
@@ -41,10 +41,10 @@ export function planPayout(candidate: PayoutCandidate, maxAutoPayoutCents: numbe
     if (!Number.isInteger(candidate.amountCents) || candidate.amountCents <= 0) {
         return { status: 'held', reason: 'non-positive amount' };
     }
-    if (candidate.amountCents >= maxAutoPayoutCents) {
+    if (candidate.amountCents > maxAutoPayoutCents) {
         return {
             status: 'held',
-            reason: `amount ${candidate.amountCents}c at or above auto-payout cap ${maxAutoPayoutCents}c`,
+            reason: `amount ${candidate.amountCents}c above auto-payout cap ${maxAutoPayoutCents}c`,
         };
     }
     return { status: 'pending', reason: null };

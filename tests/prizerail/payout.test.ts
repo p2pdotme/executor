@@ -25,10 +25,10 @@ describe('planPayout', () => {
         expect(d.reason).toMatch(/prizerail/i);
     });
 
-    test('holds a prize at or above the auto-payout cap', () => {
-        expect(planPayout({ ...base, amountCents: 60_000 }, 60_000).status).toBe('held');
-        expect(planPayout({ ...base, amountCents: 59_999 }, 60_000).status).toBe('pending');
-        expect(planPayout({ ...base, amountCents: 60_000 }, 60_000).reason).toMatch(/cap/);
+    test('pays a prize up to the cap and holds anything above it', () => {
+        expect(planPayout({ ...base, amountCents: 10_000 }, 10_000).status).toBe('pending');
+        expect(planPayout({ ...base, amountCents: 10_001 }, 10_000).status).toBe('held');
+        expect(planPayout({ ...base, amountCents: 100_000 }, 10_000).reason).toMatch(/above auto-payout cap/);
     });
 
     test('a zero cap means nothing auto-pays', () => {

@@ -7,8 +7,8 @@ import { loadPrizerailConfig, resolveUsdcAddress } from '../prizerail/config';
 import { runManualPayout } from '../prizerail/manualPayout';
 import { PrizerailStore } from '../prizerail/store';
 
-// Operator CLI for winners the payout worker leaves to a human (prizes of
-// $20 or more, Prizerail holds, failed or unconfirmed sends). It never sends
+// Operator CLI for winners the payout worker leaves to a human (prizes over
+// $100, Prizerail holds, failed or unconfirmed sends). It never sends
 // USDC: approve/retry hand the row back to the payout worker, mark-paid only
 // records a transfer after checking it on-chain. It reads the executor's own
 // env: PRIZERAIL_API_KEY picks the site and campaign (pr_prod_* → p2p-ramp on
@@ -29,7 +29,7 @@ import { PrizerailStore } from '../prizerail/store';
 //
 // 3. Pick the case from the status:
 //
-//    held, over the $20 cap → let the executor pay it from the prize wallet
+//    held, over the $100 cap → let the executor pay it from the prize wallet
 //    (needs enough USDC and a little ETH in it):
 //      bun dist/scripts/prizerailPayout.js approve <drawingId> <position>
 //    It is paid on the next scan (within 5 min); Discord gets "Prize paid".
