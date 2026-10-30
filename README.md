@@ -31,7 +31,7 @@ Operators generate all six wallets themselves (five executor wallets and one fun
 **Exception — the optional prize wallet.** When `PRIZE_PAYOUT_EXECUTOR` is set, that wallet **holds USDC**: Prizerail sends each draw's prize USDC to it, and the executor pays winners from it. Those prizes are funds at risk if the key leaks. To limit the exposure:
 - Use a dedicated wallet for it, never one of the executor wallets above, and keep only what upcoming payouts need.
 - It only sends USDC `transfer`s to winners recorded in the Postgres ledger; it grants no approvals.
-- Automatic payouts are capped (`PRIZERAIL_POLICY.maxAutoPayoutCents`): a prize of $20 or more is held for a manual payout.
+- Automatic payouts are capped (`PRIZERAIL_POLICY.maxAutoPayoutCents`): a prize over $100 is held for a manual payout.
 - Leave `PRIZE_PAYOUT_EXECUTOR` unset to keep every executor wallet gas-only.
 
 ## No keys at risk
@@ -292,12 +292,12 @@ scanner → ledger row (payout_status = pending | held | unresolved_entrant)
 ```
 
 Payout statuses: `pending` (will be paid), `held` (needs a human: Prizerail
-holds it, it is at/above the $20 cap in `PRIZERAIL_POLICY`, or zero),
+holds it, it is over the $100 cap in `PRIZERAIL_POLICY`, or zero),
 `unresolved_entrant` (no wallet in the map), `paying`, `paid`, `manual`
 (sent but unconfirmed/reverted), `failed` (never sent). Only `pending` is ever
 touched automatically; the rest wait for an operator in `prizerail_winners`.
 
-The $20 cap keeps unattended transfers small; it sits far below Prizerail's
+The $100 cap keeps unattended transfers small; it sits far below Prizerail's
 $600 large-prize threshold, past which winners must pass Prizerail's identity
 check, which this executor cannot do. The cap, the
 scan interval and the prize-wallet balance floor are code constants in
@@ -352,7 +352,7 @@ The script never sends USDC. Each command names one row, checks its status
 first, and refuses if the row moved on in the meantime. Your OS user name (or
 `PRIZERAIL_OPERATOR`) is written to `last_error` as an audit note.
 
-- **`held`, over the $20 cap:** `approve` it. The next scan (within 5 min)
+- **`held`, over the $100 cap:** `approve` it. The next scan (within 5 min)
   queues it, and the payout worker sends the full amount from the prize wallet
   with the usual at-most-once checks. The cap is only applied when a winner is
   first recorded, so an approved row is not held again.

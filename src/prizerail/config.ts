@@ -61,10 +61,11 @@ export function resolveUsdcAddress(chainId: number): string {
 export const PRIZERAIL_POLICY = {
     // How often the scanner reads settled/paid drawings and queues payouts.
     payoutScanIntervalMin: 5,
-    // Prizes at or above this many US cents are never auto-paid and wait
-    // for a human ('held'). 2000 = $20. Well under Prizerail's $600
+    // Largest prize, in US cents, paid without a human. Anything above it
+    // waits as 'held'. 10000 = $100, so the table's $10-$100 prizes pay
+    // themselves and $1,000+ waits. Well under Prizerail's $600
     // identity-check threshold, so no auto-paid winner can ever need KYC.
-    maxAutoPayoutCents: 2_000,
+    maxAutoPayoutCents: 10_000,
     // Balance-channel alert when a payout would leave the prize wallet
     // below this many USDC.
     prizeWalletMinUsdc: 100,

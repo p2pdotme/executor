@@ -179,8 +179,8 @@ run('PrizerailStore', () => {
         expect(await store.isDrawingDone(SLUG, 'd1')).toBe(true);
     });
     test('operator moves: approve, retry and mark-paid only from the expected status', async () => {
-        const held = { status: 'held' as const, reason: 'amount 5000c at or above auto-payout cap 2000c' };
-        await store.upsertWinner(SLUG, record({ amountCents: 5000, payoutStatus: 'held' }), held);
+        const held = { status: 'held' as const, reason: 'amount 100000c above auto-payout cap 10000c' };
+        await store.upsertWinner(SLUG, record({ amountCents: 100_000, payoutStatus: 'held' }), held);
         expect((await store.listNeedsAttention(SLUG, 10)).map((r) => r.payoutStatus)).toEqual(['held']);
 
         expect(await store.retryFailed(SLUG, 'd1', 0, 'x')).toBe(false); // not failed
@@ -188,7 +188,7 @@ run('PrizerailStore', () => {
         expect(await store.approveHeld(SLUG, 'd1', 0, 'again')).toBe(false); // already pending
         expect((await store.getWinner(SLUG, 'd1', 0))?.payoutStatus).toBe('pending');
         // A later scan keeps the approved row pending.
-        await store.upsertWinner(SLUG, record({ amountCents: 5000, drawingStatus: 'paid' }), held);
+        await store.upsertWinner(SLUG, record({ amountCents: 100_000, drawingStatus: 'paid' }), held);
         expect((await store.getWinner(SLUG, 'd1', 0))?.payoutStatus).toBe('pending');
 
         await store.claimPayout(SLUG, 'd1', 0);

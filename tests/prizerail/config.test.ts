@@ -92,7 +92,7 @@ describe('loadPrizerailConfig', () => {
     });
 
     test('policy lives in code, not env', () => {
-        expect(PRIZERAIL_POLICY.maxAutoPayoutCents).toBe(2_000);
+        expect(PRIZERAIL_POLICY.maxAutoPayoutCents).toBe(10_000);
         expect(PRIZERAIL_POLICY.prizeWalletMinUsdc).toBe(100);
         expect(PRIZERAIL_POLICY.payoutScanIntervalMin).toBeGreaterThan(0);
     });

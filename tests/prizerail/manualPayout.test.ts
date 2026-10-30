@@ -21,7 +21,7 @@ function row(over: Partial<WinnerRow> = {}): WinnerRow {
         amountCents: 5000,
         heldForManualPayout: false,
         payoutStatus: 'held',
-        holdReason: 'amount 5000c at or above auto-payout cap 2000c',
+        holdReason: 'amount 100000c above auto-payout cap 10000c',
         alerted: true,
         txHash: null,
         paidAt: null,
