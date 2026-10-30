@@ -15,7 +15,7 @@ import { startSettleClaimScannerWorker } from './queue/workers/settleClaimScanne
 import { startPrizerailEntryWorker } from './queue/workers/prizerailEntryWorker';
 import { startPrizerailPayoutScannerWorker } from './queue/workers/prizerailPayoutScannerWorker';
 import { startPrizerailPayoutWorker } from './queue/workers/prizerailPayoutWorker';
-import { getPrizerailStore } from './prizerail/db';
+import { initPrizerail } from './prizerail/boot';
 import { logger } from './helpers/logger';
 import { getBaseHttpProvider, getFundingSigner } from './helpers/provider';
 import { startListeners } from './listeners';
@@ -78,34 +78,31 @@ async function start() {
         res.writeHead(404).end();
     }).listen(PORT, () => logger.info(`healthz server listening on port: ${PORT}`));
 
-    // Prizerail ledger lives in Postgres; the schema is idempotent and applied
-    // on every boot so a fresh database needs no manual migration step.
-    if (config.prizerail) {
-        await getPrizerailStore(config).applySchema();
-        logger.info('prizerail: postgres schema applied');
-    }
+    // Prizerail ledger lives in Postgres. If it is down, Prizerail is off for
+    // this run (prizerail: null) and everything else still starts.
+    const runConfig = await initPrizerail(config);
 
     // WS listener
-    await startListeners(config);
+    await startListeners(runConfig);
     logger.info('listeners started');
 
-    await startSchedulers(config);
+    await startSchedulers(runConfig);
     logger.info('schedulers started');
 
     // Workers
-    startToggleWorker(config, walletManager);
-    startAssignWorker(config, walletManager);
-    startOrderSweeperWorker(config, walletManager);
-    startOrderScannerWorker(config);
-    startCashbackWorker(config, walletManager); // no-op when programme env unset
+    startToggleWorker(runConfig, walletManager);
+    startAssignWorker(runConfig, walletManager);
+    startOrderSweeperWorker(runConfig, walletManager);
+    startOrderScannerWorker(runConfig);
+    startCashbackWorker(runConfig, walletManager); // no-op when programme env unset
     // Also consumes the insurance 'SettleClaim' jobs — same queue, same Keeper
     // wallet, one consumer. No-ops on settles when INSURANCE_DIAMOND_ADDRESS is unset.
-    startDailyKeeperWorker(config, walletManager);
-    startCircleRefreshWorker(config);
-    startSettleClaimScannerWorker(config); // no-op when INSURANCE_DIAMOND_ADDRESS unset
-    startPrizerailEntryWorker(config); // no-op when PRIZERAIL_API_KEY unset
-    startPrizerailPayoutScannerWorker(config); // no-op when PRIZERAIL_API_KEY unset
-    await startPrizerailPayoutWorker(config, walletManager); // no-op unless PRIZE_PAYOUT_EXECUTOR set
+    startDailyKeeperWorker(runConfig, walletManager);
+    startCircleRefreshWorker(runConfig);
+    startSettleClaimScannerWorker(runConfig); // no-op when INSURANCE_DIAMOND_ADDRESS unset
+    startPrizerailEntryWorker(runConfig); // no-op when PRIZERAIL_API_KEY unset or Postgres was down
+    startPrizerailPayoutScannerWorker(runConfig); // no-op when PRIZERAIL_API_KEY unset or Postgres was down
+    await startPrizerailPayoutWorker(runConfig, walletManager); // no-op unless PRIZE_PAYOUT_EXECUTOR set; never throws
     logger.info('workers started');
 }
 

@@ -148,6 +148,29 @@ describe('payWinner — happy path and guards', () => {
         expect(f.state.row?.payoutStatus).toBe('pending');
     });
 
+    test('an RPC error reading the balance releases the claim and throws — nothing sent', async () => {
+        const f = fake(row(), {
+            balanceOf: async () => {
+                throw new Error('rpc timeout');
+            },
+        });
+        await expect(payWinner(f.deps, job)).rejects.toThrow(/rpc timeout/);
+        expect(f.calls).toEqual(['claim', 'release:pre-send RPC read failed: rpc timeout']);
+        expect(f.state.row?.payoutStatus).toBe('pending');
+    });
+
+    test('an RPC error reading the nonce releases the claim and throws — nothing sent', async () => {
+        const f = fake(row(), {
+            minedNonce: async () => {
+                throw new Error('rpc 429');
+            },
+        });
+        await expect(payWinner(f.deps, job)).rejects.toThrow(/rpc 429/);
+        expect(f.calls).toEqual(['claim', 'release:pre-send RPC read failed: rpc 429']);
+        expect(f.state.row?.payoutStatus).toBe('pending');
+        expect(f.state.row?.sendNonce).toBeNull();
+    });
+
     test('balance alert is rate-limited across calls', async () => {
         const f = fake(row(), { balanceOf: async () => 1_000_000n });
         await payWinner(f.deps, job).catch(() => {});
