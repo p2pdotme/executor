@@ -178,4 +178,31 @@ run('PrizerailStore', () => {
         await store.markDrawingDone(SLUG, 'd1');
         expect(await store.isDrawingDone(SLUG, 'd1')).toBe(true);
     });
+    test('operator moves: approve, retry and mark-paid only from the expected status', async () => {
+        const held = { status: 'held' as const, reason: 'amount 5000c at or above auto-payout cap 2000c' };
+        await store.upsertWinner(SLUG, record({ amountCents: 5000, payoutStatus: 'held' }), held);
+        expect((await store.listNeedsAttention(SLUG, 10)).map((r) => r.payoutStatus)).toEqual(['held']);
+
+        expect(await store.retryFailed(SLUG, 'd1', 0, 'x')).toBe(false); // not failed
+        expect(await store.approveHeld(SLUG, 'd1', 0, 'approved by ops')).toBe(true);
+        expect(await store.approveHeld(SLUG, 'd1', 0, 'again')).toBe(false); // already pending
+        expect((await store.getWinner(SLUG, 'd1', 0))?.payoutStatus).toBe('pending');
+        // A later scan keeps the approved row pending.
+        await store.upsertWinner(SLUG, record({ amountCents: 5000, drawingStatus: 'paid' }), held);
+        expect((await store.getWinner(SLUG, 'd1', 0))?.payoutStatus).toBe('pending');
+
+        await store.claimPayout(SLUG, 'd1', 0);
+        await store.markFailed(SLUG, 'd1', 0, 'presim rejected');
+        expect(await store.retryFailed(SLUG, 'd1', 0, 'retry by ops')).toBe(true);
+        await store.claimPayout(SLUG, 'd1', 0);
+        await store.markManual(SLUG, 'd1', 0, 'unconfirmed');
+
+        expect(await store.markPaidByHand(SLUG, 'd1', 0, 'held', '0xABC', 'n')).toBe(false); // it is manual
+        expect(await store.markPaidByHand(SLUG, 'd1', 0, 'manual', '0xABC', 'paid by hand')).toBe(true);
+        const paid = await store.getWinner(SLUG, 'd1', 0);
+        expect(paid?.payoutStatus).toBe('paid');
+        expect(paid?.txHash).toBe('0xABC');
+        expect((await store.findPaidByTxHash(SLUG, '0xabc')).length).toBe(1);
+        expect(await store.listNeedsAttention(SLUG, 10)).toEqual([]);
+    });
 });
