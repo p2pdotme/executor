@@ -1,13 +1,13 @@
 import { Worker } from 'bullmq';
 import { ExecutorConfig } from '../../helpers/config';
 import { logger } from '../../helpers/logger';
-import { sendOnFail } from '../../helpers/alerts';
+import { sendOnFail, sendOnSuccess } from '../../helpers/alerts';
 import { connection } from '../index';
 import { initPrizerailEntryQueue, PRIZERAIL_ENTRY_QUEUE_NAME } from '../prizerailQueues';
 import { PRIZERAIL_ENTRY_JOB_NAME, PrizerailEntryJobData } from '../types';
 import { PrizerailClient } from '../../prizerail/client';
 import { classifyEntryFailure } from '../../prizerail/failures';
-import { entrantIdFor } from '../../prizerail/entries';
+import { entrantIdFor, formatEntryAlert } from '../../prizerail/entries';
 import { getPrizerailStore } from '../../prizerail/db';
 import type { PrizerailConfig } from '../../prizerail/config';
 
@@ -60,6 +60,9 @@ async function sendEntry(
     logger.info(
         `prizerail-entry: orderId=${orderId} entries=${entries} → ${outcome} drawing=${res.drawing?.id ?? '?'} cutoff=${res.drawing?.cutoffAt ?? '?'} drawingEntrants=${res.entrantCount ?? '?'} drawingEntries=${res.totalEntries ?? '?'}`,
     );
+    // New entries only, so a retry never posts twice. A failed post must not
+    // fail the job: the entries have landed.
+    if (res.duplicates === 0) void sendOnSuccess(config, formatEntryAlert(data)).catch(() => {});
 }
 
 export function startPrizerailEntryWorker(config: ExecutorConfig): void {
