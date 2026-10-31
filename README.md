@@ -297,12 +297,17 @@ holds it, it is over the $100 cap in `PRIZERAIL_POLICY`, or zero),
 (sent but unconfirmed/reverted), `failed` (never sent). Only `pending` is ever
 touched automatically; the rest wait for an operator in `prizerail_winners`.
 
-The $100 cap keeps unattended transfers small; it sits far below Prizerail's
-$600 large-prize threshold, past which winners must pass Prizerail's identity
-check, which this executor cannot do. The cap, the
-scan interval and the prize-wallet balance floor are code constants in
-`src/prizerail/config.ts` (`PRIZERAIL_POLICY`) — product rules, changed with
-a review, not per deploy.
+The $100 cap keeps unattended transfers small. It is a per-prize cap, and it
+is not the same thing as Prizerail's identity check: per Prizerail's docs
+changelog (2026-10-20) that check applies once a winner's prizes reach $600
+**within a calendar year**, counting every prize, so six $100 wins would
+reach it. The check is announced but not live yet. Today Prizerail holds only
+a single prize at or over its large-prize threshold (`heldForManualPayout`),
+which the scanner honours. When the calendar-year check launches, confirm
+whether Prizerail flags the prize itself; if not, a per-wallet yearly hold
+has to be added to `planPayout`. The cap, the scan interval and the
+prize-wallet balance floor are code constants in `src/prizerail/config.ts`
+(`PRIZERAIL_POLICY`) — product rules, changed with a review, not per deploy.
 
 **Storage.** The entrant map and the winner ledger live in Postgres
 (`DATABASE_URL`, schema applied at boot: `prizerail_entrants`,
@@ -330,10 +335,12 @@ is the record of money owed — back the database up.
   takes the amount Prizerail now reports (a `pending` row whose amount moved
   is parked as `held` first, with both amounts in `hold_reason`); once
   anything has been sent the amount is frozen.
-- The payout worker's alerts and the ledger's `last_error` never carry
-  secrets: ethers v6 embeds the RPC URL (Alchemy key included) in its error
-  messages, so every Prizerail error that leaves the process goes through
-  `helpers/redact.ts` first.
+- ethers v6 embeds the RPC URL (Alchemy key included) in its error messages.
+  The payout worker, the scanner and the operator script pass their errors
+  through `helpers/redact.ts` before alerting or writing `last_error`.
+  `safeSend`'s own alerts (presim and send failures, shared by every worker)
+  are not yet redacted, so an RPC-level failure during the USDC transfer can
+  still post the key to the fail channel.
 - Manual payouts: see **Paying held winners** below.
 - The HMAC key is part of the campaign's identity. Rotating it makes every
   wallet a new entrant, breaks guarantee-draw de-duplication, and leaves
