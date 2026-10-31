@@ -326,6 +326,10 @@ is the record of money owed — back the database up.
   or two replicas cannot double-alert or double-pay. The Discord alert is
   only marked sent once the webhook accepts every chunk. A winner whose
   wallet was unresolved is re-resolved on later ticks if the map is repaired.
+  While a row is `pending`, `held` or `unresolved_entrant`, a re-scan also
+  takes the amount Prizerail now reports (a `pending` row whose amount moved
+  is parked as `held` first, with both amounts in `hold_reason`); once
+  anything has been sent the amount is frozen.
 - The payout worker's alerts and the ledger's `last_error` never carry
   secrets: ethers v6 embeds the RPC URL (Alchemy key included) in its error
   messages, so every Prizerail error that leaves the process goes through
