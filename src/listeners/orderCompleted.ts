@@ -263,6 +263,8 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
                     orderId: String(orderId),
                     user: String(user),
                     entries,
+                    amountUsdc: amount.toString(),
+                    currency: currencyCode,
                 });
             }
         } catch (err: any) {
