@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { ExecutorConfig } from '../../helpers/config';
 import { logger } from '../../helpers/logger';
 import { sendOnFail } from '../../helpers/alerts';
+import { redactError } from '../../helpers/redact';
 import { trySendDiscordAlert } from '../../helpers/discord';
 import { withTimeout } from '../../helpers/provider';
 import { connection } from '../index';
@@ -163,9 +164,9 @@ export function startPrizerailPayoutScannerWorker(config: ExecutorConfig): void 
         { connection, concurrency: 1, lockDuration: LOCK_DURATION_MS },
     );
 
-    worker.on('error', (err) => logger.error(`prizerail-payout-scan: worker error: ${err?.message}`));
+    worker.on('error', (err) => logger.error(`prizerail-payout-scan: worker error: ${redactError(err)}`));
     worker.on('failed', (job, err) => {
-        const msg = `prizerail-payout-scan: failed jobId=${job?.id}: ${err?.message}`;
+        const msg = `prizerail-payout-scan: failed jobId=${job?.id}: ${redactError(err)}`;
         logger.warn(msg);
         void sendOnFail(config, msg).catch(() => {});
     });

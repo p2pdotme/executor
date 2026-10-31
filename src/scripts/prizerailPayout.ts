@@ -3,6 +3,7 @@ dotenv.config();
 
 import { userInfo } from 'os';
 import { getHttpProvider, withTimeout } from '../helpers/provider';
+import { redactError } from '../helpers/redact';
 import { loadPrizerailConfig, resolveUsdcAddress } from '../prizerail/config';
 import { runManualPayout } from '../prizerail/manualPayout';
 import { PrizerailStore } from '../prizerail/store';
@@ -90,6 +91,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-    process.stderr.write(`${(err as Error)?.message ?? err}\n`);
+    process.stderr.write(`${redactError(err)}\n`);
     process.exit(1);
 });
