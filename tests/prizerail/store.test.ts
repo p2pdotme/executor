@@ -97,8 +97,34 @@ run('PrizerailStore', () => {
         await store.upsertWinner(SLUG, record({ position: 1, amountCents: 2500 }), { status: 'pending', reason: null });
         row = await store.getWinner(SLUG, 'd1', 1);
         expect(row?.payoutStatus).toBe('held');
-        expect(row?.holdReason).toMatch(/amount changed/);
-        expect(row?.amountCents).toBe(1500); // original amount kept for the human to compare
+        expect(row?.holdReason).toMatch(/amount changed after first sighting: 1500c → 2500c/);
+        expect(row?.amountCents).toBe(2500); // what Prizerail now says; the old amount is in the reason
+
+        // A held row keeps following Prizerail's amount too, and says so.
+        await store.upsertWinner(SLUG, record({ position: 1, amountCents: 3000 }), { status: 'pending', reason: null });
+        row = await store.getWinner(SLUG, 'd1', 1);
+        expect(row?.payoutStatus).toBe('held');
+        expect(row?.amountCents).toBe(3000);
+        expect(row?.holdReason).toMatch(/amount changed while held: 2500c → 3000c/);
+    });
+
+    test('a late-resolved entrant is paid the amount Prizerail reports now, not the first one', async () => {
+        // First sighting: no wallet, $1,000. Later: wallet known, Prizerail says $50.
+        await store.upsertWinner(SLUG, record({ wallet: null, amountCents: 100_000 }), { status: 'unresolved_entrant', reason: 'x' });
+        await store.upsertWinner(SLUG, record({ amountCents: 5000 }), { status: 'pending', reason: null });
+        const row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row?.payoutStatus).toBe('pending');
+        expect(row?.amountCents).toBe(5000);
+    });
+
+    test('the amount is frozen once anything has been sent', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        await store.claimPayout(SLUG, 'd1', 0);
+        await store.upsertWinner(SLUG, record({ amountCents: 9999 }), { status: 'pending', reason: null });
+        expect((await store.getWinner(SLUG, 'd1', 0))?.amountCents).toBe(1500);
+        await store.markPaid(SLUG, 'd1', 0, '0xhash');
+        await store.upsertWinner(SLUG, record({ amountCents: 9999 }), { status: 'pending', reason: null });
+        expect((await store.getWinner(SLUG, 'd1', 0))?.amountCents).toBe(1500);
     });
 
     test('claim snapshots nothing; recordSendNonce/recordTxHash only apply while paying', async () => {

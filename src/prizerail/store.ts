@@ -119,9 +119,12 @@ export class PrizerailStore {
     // ── winners ─────────────────────────────────────────────────────────
 
     /**
-     * Insert a winner once; on later sightings only refresh the drawing
-     * status and fill a wallet that was unresolved before. Terminal payout
-     * states (paying/paid/manual/failed) are never reopened by a re-scan.
+     * Insert a winner once; on later sightings refresh the drawing status,
+     * fill a wallet that was unresolved before, and — while nothing has
+     * been sent — take the amount Prizerail now reports, so a late-resolved
+     * or approved row is paid what Prizerail says, not what it said first.
+     * Terminal payout states (paying/paid/manual/failed) are never reopened
+     * or re-priced by a re-scan.
      */
     async upsertWinner(campaign: string, r: WinnerRecord, decision: PayoutDecision): Promise<UpsertResult> {
         const res = await this.pool.query<RawRow>(
@@ -134,6 +137,10 @@ export class PrizerailStore {
                 drawing_status = EXCLUDED.drawing_status,
                 wallet = COALESCE(prizerail_winners.wallet, EXCLUDED.wallet),
                 held_for_manual_payout = prizerail_winners.held_for_manual_payout OR EXCLUDED.held_for_manual_payout,
+                amount_cents = CASE
+                    WHEN prizerail_winners.payout_status IN ('pending', 'held', 'unresolved_entrant')
+                        THEN EXCLUDED.amount_cents
+                    ELSE prizerail_winners.amount_cents END,
                 payout_status = CASE
                     -- a wallet turned up for a previously unresolved entrant
                     WHEN prizerail_winners.payout_status = 'unresolved_entrant' AND EXCLUDED.wallet IS NOT NULL
@@ -150,6 +157,9 @@ export class PrizerailStore {
                         THEN 'held by Prizerail for review (seen after first sighting)'
                     WHEN prizerail_winners.payout_status = 'pending' AND EXCLUDED.amount_cents <> prizerail_winners.amount_cents
                         THEN 'amount changed after first sighting: ' || prizerail_winners.amount_cents || 'c → ' || EXCLUDED.amount_cents || 'c'
+                    WHEN prizerail_winners.payout_status = 'held' AND EXCLUDED.amount_cents <> prizerail_winners.amount_cents
+                        THEN COALESCE(prizerail_winners.hold_reason || '; ', '') || 'amount changed while held: '
+                             || prizerail_winners.amount_cents || 'c → ' || EXCLUDED.amount_cents || 'c'
                     ELSE prizerail_winners.hold_reason END,
                 updated_at = now()
              -- xmax = 0 is true only for a freshly inserted row (no prior version);
