@@ -266,6 +266,7 @@ OrderCompleted (same filters as cashback: BUY/SELL, non-B2B, rate > 0)
             ├─ INSERT prizerail_entrants (campaign, entrantId → wallet)   (reverse map for payouts)
             └─ POST /campaigns/<slug>/entries  mode=increment  eventId=order-<orderId>
                  (Prizerail ignores repeated eventIds → retries never double-count)
+            └─ Discord (success channel): order id, value, country, entries; new entries only
 
 Every PRIZERAIL_POLICY.payoutScanIntervalMin (5 min) — prizerailPayoutScanner
   └─ GET /campaigns/<slug>/drawings?status=settled|paid

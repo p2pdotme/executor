@@ -27,3 +27,32 @@ export function entriesForOrder(amountUsdc6: bigint): number {
     if (entries > BigInt(MAX_ENTRIES)) return MAX_ENTRIES;
     return Number(entries);
 }
+
+// On-chain currency code → country, for operator alerts. Codes that are not
+// one country (USD, EUR) or are not listed here fall back to the code itself.
+const COUNTRY_BY_CURRENCY: Readonly<Record<string, string>> = {
+    ARS: 'Argentina',
+    BOB: 'Bolivia',
+    BRL: 'Brazil',
+    COP: 'Colombia',
+    ECU: 'Ecuador',
+    EGP: 'Egypt',
+    IDR: 'Indonesia',
+    INR: 'India',
+    KES: 'Kenya',
+    MEX: 'Mexico',
+    MXN: 'Mexico',
+    NGN: 'Nigeria',
+    PEN: 'Peru',
+    PHP: 'Philippines',
+    VEN: 'Venezuela',
+    VES: 'Venezuela',
+};
+
+/** Discord line for entries counted on one order. Carries no wallet. */
+export function formatEntryAlert(data: { orderId: string; entries: number; amountUsdc?: string; currency?: string }): string {
+    const value = data.amountUsdc ? `${(Number(data.amountUsdc) / 1e6).toFixed(2)} USDC` : 'value n/a';
+    const code = data.currency || 'n/a';
+    const country = COUNTRY_BY_CURRENCY[code];
+    return `🎟️ Prizerail entries: order ${data.orderId} · ${value} · ${country ? `${country} (${code})` : code} · ${data.entries} entries`;
+}

@@ -36,6 +36,9 @@ export type PrizerailEntryJobData = {
     orderId: string;
     user: string; // 0x-prefixed wallet; never sent to Prizerail as-is
     entries: number; // integer >= 1
+    // For the Discord alert only. Optional: jobs queued before these existed have neither.
+    amountUsdc?: string; // order amount, 6-decimal USDC units
+    currency?: string; // on-chain currency code
 };
 
 // PrizerailPayout job payload — one winner row to pay from the prize
