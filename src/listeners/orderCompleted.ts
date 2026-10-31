@@ -1,17 +1,36 @@
-import { Contract, decodeBytes32String } from 'ethers';
+import { Contract } from 'ethers';
 import { ExecutorConfig } from '../helpers/config';
 import { getBaseWsProvider, getBaseHttpProvider, withTimeout } from '../helpers/provider';
 import { DIAMOND_ABI } from '../helpers/abi';
 import { logger } from '../helpers/logger';
 import { addCashbackJob } from '../queue';
+import { addPrizerailEntryJob } from '../queue/prizerailQueues';
+import { entriesForOrder } from '../prizerail/entries';
+import { isCurrencyExcluded } from '../prizerail/config';
+import {
+    anyRatePositive,
+    computeCashback,
+    decodeCurrency,
+    resolveCashbackBps,
+} from './cashbackEligibility';
 import { sendDiscordAlert } from '../helpers/discord';
+import { redactError } from '../helpers/redact';
+import { withRetry } from '../helpers/retry';
 
 const ORDER_COMPLETED_EVENT = 'OrderCompleted';
+
+// The B2B check is one eth_call, but it is the only thing between a completed
+// order and its cashback / draw entries: if it fails the order is gone (gap
+// replay only covers WS downtime, not a dropped call). So it is retried a
+// few times, and a final failure is alerted with the order id so an operator
+// can replay it by hand.
+const INTEGRATOR_LOOKUP_TIMEOUT_MS = 5_000;
+const INTEGRATOR_LOOKUP_ATTEMPTS = 3;
+const INTEGRATOR_LOOKUP_BACKOFF_MS = 2_000;
 
 // OrderProcessorStorage.OrderType enum: { BUY=0, SELL=1, PAY=2 }
 const ORDER_TYPE_BUY = 0;
 const ORDER_TYPE_SELL = 1;
-const BPS_DENOMINATOR = 10_000n;
 
 // Gap-reconcile tuning. On WS reconnect we replay OrderCompleted logs that
 // were emitted while the socket was down via HTTP eth_getLogs. Chunk size
@@ -35,27 +54,6 @@ const STABLE_UPTIME_MS = 120_000;
 // Emit a reminder every Nth failed attempt while an outage persists.
 const OUTAGE_REMINDER_EVERY = 12;
 
-// Decode the order's bytes32 currency into its symbol (e.g. "ARS"). Returns
-// '' when the field is empty/unset or not a valid bytes32 string so callers
-// can safely fall back to the default cashback rate.
-function decodeCurrency(currency: unknown): string {
-    if (typeof currency !== 'string' || !currency) return '';
-    try {
-        return decodeBytes32String(currency).trim().toUpperCase();
-    } catch {
-        return '';
-    }
-}
-
-// Resolve the cashback bps for an order: a per-currency override when one is
-// configured for the order's currency, otherwise the default cashbackBps.
-function resolveCashbackBps(config: ExecutorConfig, currencyCode: string): number {
-    if (currencyCode && currencyCode in config.cashbackBpsByCurrency) {
-        return config.cashbackBpsByCurrency[currencyCode];
-    }
-    return config.cashbackBps;
-}
-
 /**
  * B2B cashback programme listener — server-side mirror of the
  * contracts-v4 handleLotpotBuyerCashback hook that used to live inside
@@ -73,6 +71,13 @@ function resolveCashbackBps(config: ExecutorConfig, currencyCode: string): numbe
  * Programme is opt-in: when CASHBACK_INTEGRATOR_ADDRESS or CASHBACK_BPS
  * is unset, this listener silently no-ops on every event (we still
  * subscribe, so toggling the env on later doesn't need a restart).
+ *
+ * Prizerail (Nov 2026): the same eligibility rules also feed the Prizerail
+ * draw programme that replaces cashback credit. When PRIZERAIL_API_KEY is set,
+ * each eligible order additionally enqueues one SendPrizerailEntry job with
+ * one entry per whole USDC unless the market is excluded (see prizerail/).
+ * Both programmes can
+ * run side by side during the cutover; each is gated by its own env.
  *
  * Idempotency: the cashback queue's jobId is the orderId, so a WS
  * reconnect that replays a recent block won't double-issue credit.
@@ -109,18 +114,22 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
     let consecutiveFailures = 0;
     let outageAlerted = false;
 
-    // Programme is on when an integrator is configured AND at least one
-    // positive rate exists — either the default bps or a per-currency
-    // override (an operator may zero the default but still credit ARS).
-    const anyCurrencyOverridePositive = Object.values(
-        config.cashbackBpsByCurrency,
-    ).some((bps) => bps > 0);
-    const programmeOn =
-        !!config.cashbackIntegratorAddress &&
-        (config.cashbackBps > 0 || anyCurrencyOverridePositive);
+    // Cashback is on when its integrator is configured AND at least one
+    // positive rate exists — the default bps or a per-currency override (an
+    // operator may zero the default but still credit one market). Prizerail
+    // is on whenever its key is set: its rule (one entry per whole USDC,
+    // minus the site's excluded markets) does not use the cashback rates.
+    const cashbackOn = !!config.cashbackIntegratorAddress && anyRatePositive(config);
+    const prizerail = config.prizerail;
+    const prizerailOn = !!prizerail;
+    const programmeOn = cashbackOn || prizerailOn;
     if (!programmeOn) {
         logger.info(
-            'OrderCompleted: cashback programme disabled (env unset) — listener attached as no-op so toggling env later does not require restart',
+            'OrderCompleted: cashback + prizerail programmes disabled (env unset) — listener attached as no-op so toggling env later does not require restart',
+        );
+    } else {
+        logger.info(
+            `OrderCompleted: programmes — cashback=${cashbackOn ? 'on' : 'off'} prizerail=${prizerailOn ? `on (${config.prizerail?.campaignSlug})` : 'off'}`,
         );
     }
 
@@ -178,22 +187,21 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             const orderType = Number(order.orderType);
             if (orderType !== ORDER_TYPE_BUY && orderType !== ORDER_TYPE_SELL) return;
 
-            // Resolve the rate per the order's currency, falling back to the
-            // default bps. ARS (Argentina) is 1% vs the default 2%.
             const currencyCode = decodeCurrency(order.currency);
-            const bps = resolveCashbackBps(config, currencyCode);
-            if (bps <= 0) {
-                logger.debug(
-                    `OrderCompleted: orderId=${orderId} currency=${currencyCode || 'n/a'} → 0 bps rate, skipping`,
-                );
-                return;
-            }
-
             const amount: bigint = order.amount;
-            const cashback = (amount * BigInt(bps)) / BPS_DENOMINATOR;
-            if (cashback <= 0n) {
+
+            // Cashback: rate per the order's currency, falling back to the
+            // default bps (per-market overrides come from CASHBACK_BPS_BY_CURRENCY).
+            const bps = cashbackOn ? resolveCashbackBps(config, currencyCode) : 0;
+            const cashback = bps > 0 ? computeCashback(amount, bps) : 0n;
+
+            // Prizerail: one entry per whole USDC unless the market is excluded.
+            const excluded = !!prizerail && isCurrencyExcluded(prizerail, currencyCode);
+            const entries = prizerail && !excluded ? entriesForOrder(amount) : 0;
+
+            if (cashback <= 0n && entries <= 0) {
                 logger.debug(
-                    `OrderCompleted: orderId=${orderId} amount=${amount} → 0 cashback after bps, skipping`,
+                    `OrderCompleted: orderId=${orderId} amount=${amount} currency=${currencyCode || 'n/a'} → nothing to do (cashback bps=${bps}, draw ${excluded ? 'market excluded' : '0 entries'}), skipping`,
                 );
                 return;
             }
@@ -203,14 +211,27 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             // flow that we don't touch here.
             let integrator: string;
             try {
-                integrator = await withTimeout(
-                    httpDiamond.getOrderIntegrator(orderId),
-                    5000,
+                integrator = await withRetry(
+                    () => withTimeout(httpDiamond.getOrderIntegrator(orderId), INTEGRATOR_LOOKUP_TIMEOUT_MS),
+                    {
+                        attempts: INTEGRATOR_LOOKUP_ATTEMPTS,
+                        baseDelayMs: INTEGRATOR_LOOKUP_BACKOFF_MS,
+                        onRetry: (err, attempt) =>
+                            logger.warn(
+                                `OrderCompleted: getOrderIntegrator attempt ${attempt}/${INTEGRATOR_LOOKUP_ATTEMPTS} failed for orderId=${orderId}: ${redactError(err)}`,
+                            ),
+                    },
                 );
-            } catch (err: any) {
+            } catch (err: unknown) {
+                const reason = redactError(err);
                 logger.error(
-                    `OrderCompleted: getOrderIntegrator failed for orderId=${orderId}: ${err?.message ?? err}`,
+                    `OrderCompleted: getOrderIntegrator failed for orderId=${orderId} after ${INTEGRATOR_LOOKUP_ATTEMPTS} attempts: ${reason} — order dropped (cashback=${cashback} entries=${entries})`,
                 );
+                void sendDiscordAlert(
+                    config.discordOnFailWebhookUrl,
+                    `⚠️ OrderCompleted: could not check whether orderId=${orderId} is B2B (${reason}). ` +
+                        `Its cashback (${cashback}) and draw entries (${entries}) were NOT queued — replay the order by hand (tx ${txHash}).`,
+                ).catch(() => {});
                 return;
             }
             if (integrator && integrator !== '0x0000000000000000000000000000000000000000') {
@@ -222,18 +243,28 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
 
             const orderTypeLabel = orderType === ORDER_TYPE_BUY ? 'BUY' : 'SELL';
             logger.info(
-                `OrderCompleted (eligible ${orderTypeLabel}, ${source}): orderId=${orderId} user=${user} amount=${amount} currency=${currencyCode || 'n/a'} bps=${bps} cashback=${cashback} txHash=${txHash}`,
+                `OrderCompleted (eligible ${orderTypeLabel}, ${source}): orderId=${orderId} user=${user} amount=${amount} currency=${currencyCode || 'n/a'} cashback=${cashback} (bps=${bps}) entries=${entries} txHash=${txHash}`,
             );
 
-            await addCashbackJob(
-                'IssueCashbackCredit',
-                {
+            if (cashback > 0n) {
+                await addCashbackJob(
+                    'IssueCashbackCredit',
+                    {
+                        orderId: String(orderId),
+                        user: String(user),
+                        amount: cashback.toString(),
+                    },
+                    { jobId: `cashback-${String(orderId)}` },
+                );
+            }
+
+            if (entries > 0) {
+                await addPrizerailEntryJob({
                     orderId: String(orderId),
                     user: String(user),
-                    amount: cashback.toString(),
-                },
-                { jobId: `cashback-${String(orderId)}` },
-            );
+                    entries,
+                });
+            }
         } catch (err: any) {
             logger.error(
                 { error: String(err?.message ?? err), source },
