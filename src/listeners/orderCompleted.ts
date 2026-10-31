@@ -14,8 +14,19 @@ import {
     resolveCashbackBps,
 } from './cashbackEligibility';
 import { sendDiscordAlert } from '../helpers/discord';
+import { redactError } from '../helpers/redact';
+import { withRetry } from '../helpers/retry';
 
 const ORDER_COMPLETED_EVENT = 'OrderCompleted';
+
+// The B2B check is one eth_call, but it is the only thing between a completed
+// order and its cashback / draw entries: if it fails the order is gone (gap
+// replay only covers WS downtime, not a dropped call). So it is retried a
+// few times, and a final failure is alerted with the order id so an operator
+// can replay it by hand.
+const INTEGRATOR_LOOKUP_TIMEOUT_MS = 5_000;
+const INTEGRATOR_LOOKUP_ATTEMPTS = 3;
+const INTEGRATOR_LOOKUP_BACKOFF_MS = 2_000;
 
 // OrderProcessorStorage.OrderType enum: { BUY=0, SELL=1, PAY=2 }
 const ORDER_TYPE_BUY = 0;
@@ -200,14 +211,27 @@ export async function attachOrderCompletedListener(config: ExecutorConfig) {
             // flow that we don't touch here.
             let integrator: string;
             try {
-                integrator = await withTimeout(
-                    httpDiamond.getOrderIntegrator(orderId),
-                    5000,
+                integrator = await withRetry(
+                    () => withTimeout(httpDiamond.getOrderIntegrator(orderId), INTEGRATOR_LOOKUP_TIMEOUT_MS),
+                    {
+                        attempts: INTEGRATOR_LOOKUP_ATTEMPTS,
+                        baseDelayMs: INTEGRATOR_LOOKUP_BACKOFF_MS,
+                        onRetry: (err, attempt) =>
+                            logger.warn(
+                                `OrderCompleted: getOrderIntegrator attempt ${attempt}/${INTEGRATOR_LOOKUP_ATTEMPTS} failed for orderId=${orderId}: ${redactError(err)}`,
+                            ),
+                    },
                 );
-            } catch (err: any) {
+            } catch (err: unknown) {
+                const reason = redactError(err);
                 logger.error(
-                    `OrderCompleted: getOrderIntegrator failed for orderId=${orderId}: ${err?.message ?? err}`,
+                    `OrderCompleted: getOrderIntegrator failed for orderId=${orderId} after ${INTEGRATOR_LOOKUP_ATTEMPTS} attempts: ${reason} — order dropped (cashback=${cashback} entries=${entries})`,
                 );
+                void sendDiscordAlert(
+                    config.discordOnFailWebhookUrl,
+                    `⚠️ OrderCompleted: could not check whether orderId=${orderId} is B2B (${reason}). ` +
+                        `Its cashback (${cashback}) and draw entries (${entries}) were NOT queued — replay the order by hand (tx ${txHash}).`,
+                ).catch(() => {});
                 return;
             }
             if (integrator && integrator !== '0x0000000000000000000000000000000000000000') {
