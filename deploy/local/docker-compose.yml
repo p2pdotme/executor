@@ -11,6 +11,24 @@ services:
       timeout: 2s
       retries: 5
 
+  postgres:
+    image: postgres:16-alpine
+    # Prizerail ledger (entrant map, winners, payout state). Loopback-only.
+    environment:
+      - POSTGRES_USER=executor
+      - POSTGRES_PASSWORD=executor
+      - POSTGRES_DB=executor
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U executor"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
   executor:
     build:
       context: ../..
@@ -18,9 +36,12 @@ services:
     env_file: ../../.env
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgres://executor:executor@postgres:5432/executor
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy

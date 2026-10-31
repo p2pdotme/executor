@@ -8,7 +8,13 @@ export enum WalletRole {
     Sweeper = 'sweeper',
     Cashback = 'cashback',
     Keeper = 'keeper',
+    // Holds and sends prize USDC for the Prizerail programme. OPTIONAL: only
+    // loaded when PRIZE_PAYOUT_EXECUTOR is set, so a community executor that
+    // runs no draw never needs a funded wallet here.
+    Prize = 'prize',
 }
+
+const OPTIONAL_ROLES: ReadonlySet<WalletRole> = new Set([WalletRole.Prize]);
 
 const ROLE_LABELS: Record<WalletRole, string> = {
     [WalletRole.Toggle]: 'Toggle',
@@ -16,6 +22,7 @@ const ROLE_LABELS: Record<WalletRole, string> = {
     [WalletRole.Sweeper]: 'Sweeper',
     [WalletRole.Cashback]: 'Cashback',
     [WalletRole.Keeper]: 'Keeper',
+    [WalletRole.Prize]: 'Prize',
 };
 
 // When a subwallet drops below minBalance, auto-top-up to this target
@@ -51,11 +58,16 @@ export class WalletManager {
             // All are permissionless, so any funded wallet works — no on-chain
             // whitelist needed.
             [WalletRole.Keeper]: 'KEEPER_EXECUTOR',
+            [WalletRole.Prize]: 'PRIZE_PAYOUT_EXECUTOR',
         };
 
         for (const role of Object.values(WalletRole) as WalletRole[]) {
             const envVar = envVarNames[role];
             const pk = (process.env[envVar] ?? '').trim();
+            if (!pk && OPTIONAL_ROLES.has(role)) {
+                logger.info(`[WalletManager] ${ROLE_LABELS[role]} wallet not configured (${envVar} unset) — skipped`);
+                continue;
+            }
             if (!pk) {
                 throw new Error(
                     `[WalletManager] ${envVar} is not set — every executor wallet key must be provided via the environment`,
@@ -67,12 +79,26 @@ export class WalletManager {
             this.signers.set(role, signer);
         }
 
+        // Two roles on one key would mean two NonceManagers racing on one
+        // account — the exact failure the one-consumer-per-wallet rule prevents.
+        const seen = new Map<string, WalletRole>();
+        for (const [role, signer] of this.signers) {
+            const address = (await signer.getAddress()).toLowerCase();
+            const other = seen.get(address);
+            if (other) {
+                throw new Error(`[WalletManager] ${ROLE_LABELS[role]} and ${ROLE_LABELS[other]} share the same key (${address}) — every role needs its own wallet`);
+            }
+            seen.set(address, role);
+        }
+
         this.initialized = true;
     }
 
     getSigner(role: WalletRole): NonceManager {
         if (!this.initialized) throw new Error('[WalletManager] not initialized — call init() first');
-        return this.signers.get(role)!;
+        const signer = this.signers.get(role);
+        if (!signer) throw new Error(`[WalletManager] ${ROLE_LABELS[role]} wallet is not configured`);
+        return signer;
     }
 
     async getAddresses(): Promise<Record<WalletRole, string>> {
@@ -97,6 +123,7 @@ export class WalletManager {
             `Sweeper:  \`${addr[WalletRole.Sweeper]}\``,
             `Cashback: \`${addr[WalletRole.Cashback]}\`  ← whitelist via integrator.setCreditIssuer`,
             `Keeper:   \`${addr[WalletRole.Keeper]}\` ← approveUnstakeBatch + blacklistInactiveMerchants + settleClaim`,
+            ...(addr[WalletRole.Prize] ? [`Prize:    \`${addr[WalletRole.Prize]}\` ← fund with USDC; set as the Prizerail payout wallet`] : []),
         ].join('\n');
         logger.info(msg);
         await sendDiscordAlert(discordOnSuccessWebhookUrl, msg);
