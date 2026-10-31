@@ -326,6 +326,10 @@ is the record of money owed — back the database up.
   or two replicas cannot double-alert or double-pay. The Discord alert is
   only marked sent once the webhook accepts every chunk. A winner whose
   wallet was unresolved is re-resolved on later ticks if the map is repaired.
+- The payout worker's alerts and the ledger's `last_error` never carry
+  secrets: ethers v6 embeds the RPC URL (Alchemy key included) in its error
+  messages, so every Prizerail error that leaves the process goes through
+  `helpers/redact.ts` first.
 - Manual payouts: see **Paying held winners** below.
 - The HMAC key is part of the campaign's identity. Rotating it makes every
   wallet a new entrant, breaks guarantee-draw de-duplication, and leaves

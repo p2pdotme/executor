@@ -3,6 +3,7 @@ import { Contract, parseUnits } from 'ethers';
 import { ExecutorConfig } from '../../helpers/config';
 import { logger } from '../../helpers/logger';
 import { sendBalanceAlert, sendOnFail, sendOnSuccess } from '../../helpers/alerts';
+import { redactError } from '../../helpers/redact';
 import { safeSend } from '../../helpers/safeSend';
 import { withTimeout } from '../../helpers/provider';
 import { WalletManager, WalletRole } from '../../helpers/walletManager';
@@ -153,7 +154,8 @@ export async function payWinner(d: PayoutDeps, data: PrizerailPayoutJobData): Pr
         funded = await ensureBalance(d, amount);
         nonce = await d.minedNonce(d.prizeAddress);
     } catch (err: unknown) {
-        await d.store.releaseClaim(campaign, drawingId, position, `pre-send RPC read failed: ${(err as Error)?.message ?? err}`);
+        // Redacted: an ethers error carries the RPC URL, Alchemy key included.
+        await d.store.releaseClaim(campaign, drawingId, position, `pre-send RPC read failed: ${redactError(err)}`);
         throw err; // retry with backoff
     }
 
@@ -176,7 +178,7 @@ export async function payWinner(d: PayoutDeps, data: PrizerailPayoutJobData): Pr
     } catch (err: unknown) {
         // Ambiguous: the tx may or may not have left. Keep the row 'paying';
         // the next attempt reconciles from the chain instead of re-sending.
-        logger.error(`prizerail-payout: ${tag} send errored (${sentHash ? 'hash known' : 'no hash'}): ${(err as Error)?.message ?? err}`);
+        logger.error(`prizerail-payout: ${tag} send errored (${sentHash ? 'hash known' : 'no hash'}): ${redactError(err)}`);
         throw err;
     }
 
@@ -256,7 +258,7 @@ export async function startPrizerailPayoutWorker(config: ExecutorConfig, walletM
     try {
         deps = await buildDeps(config, prizerail, walletManager);
     } catch (err: unknown) {
-        const msg = `prizerail-payout: NOT started (${(err as Error)?.message ?? err}) — entries and winner discovery keep running; payouts resume after a restart`;
+        const msg = `prizerail-payout: NOT started (${redactError(err)}) — entries and winner discovery keep running; payouts resume after a restart`;
         logger.error(msg);
         await sendOnFail(config, `⚠️ ${msg}`).catch(() => {});
         return;
@@ -274,9 +276,9 @@ export async function startPrizerailPayoutWorker(config: ExecutorConfig, walletM
         { connection, concurrency: 1, lockDuration: LOCK_DURATION_MS },
     );
 
-    worker.on('error', (err) => logger.error(`prizerail-payout: worker error: ${err?.message}`));
+    worker.on('error', (err) => logger.error(`prizerail-payout: worker error: ${redactError(err)}`));
     worker.on('failed', (job, err) => {
-        const msg = `prizerail-payout: failed jobId=${job?.id} attempt=${job?.attemptsMade}/${job?.opts.attempts ?? 1}: ${err?.message}`;
+        const msg = `prizerail-payout: failed jobId=${job?.id} attempt=${job?.attemptsMade}/${job?.opts.attempts ?? 1}: ${redactError(err)}`;
         logger.warn(msg);
         if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
             void sendOnFail(config, `Prizerail payout gave up for now — the scanner re-queues it next tick\n${msg}`).catch(() => {});
