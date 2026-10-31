@@ -61,10 +61,18 @@ export function resolveUsdcAddress(chainId: number): string {
 export const PRIZERAIL_POLICY = {
     // How often the scanner reads settled/paid drawings and queues payouts.
     payoutScanIntervalMin: 5,
-    // Largest prize, in US cents, paid without a human. Anything above it
-    // waits as 'held'. 10000 = $100, so the table's $10-$100 prizes pay
-    // themselves and $1,000+ waits. Well under Prizerail's $600
-    // identity-check threshold, so no auto-paid winner can ever need KYC.
+    // Largest single prize, in US cents, paid without a human. Anything
+    // above it waits as 'held'. 10000 = $100, so the table's $10-$100 prizes
+    // pay themselves and $1,000+ waits.
+    //
+    // This is a per-prize cap. Prizerail's identity check is a different
+    // rule: per its docs changelog (2026-10-20) it applies once a winner's
+    // prizes reach $600 within a calendar year, so six $100 wins would
+    // reach it. That check is announced but not live; Prizerail currently
+    // holds only a single prize at or over its large-prize threshold
+    // (heldForManualPayout, honoured in planPayout). When the yearly check
+    // launches, confirm whether Prizerail flags the prize itself; if not,
+    // add a per-wallet calendar-year hold to planPayout.
     maxAutoPayoutCents: 10_000,
     // Balance-channel alert when a payout would leave the prize wallet
     // below this many USDC.
