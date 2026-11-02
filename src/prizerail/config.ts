@@ -7,7 +7,7 @@ export type PrizerailSiteConfig = {
     baseUrl: string;
     campaignSlug: string;
     chainId: number;
-    // Markets that earn no draw entries (currently none on either site).
+    // Markets that earn no draw entries (production: VEN; sandbox: none).
     // Every other market earns one entry per whole USDC (see
     // prizerail/entries.ts). Independent of the cashback rates in
     // CASHBACK_BPS / CASHBACK_BPS_BY_CURRENCY.
@@ -18,10 +18,10 @@ export const PRIZERAIL_SITES: Readonly<Record<PrizerailSite, PrizerailSiteConfig
         baseUrl: 'https://www.prizerail.com/api/v1',
         campaignSlug: 'p2p-ramp', // https://www.prizerail.com/campaigns/p2p-ramp
         chainId: 8453, // Base mainnet
-        // Every market earns entries. INR, VEN and BOB were excluded at
-        // launch and opened up in November 2026; list a market here (and in
-        // the user app) to take it out of the draw again.
-        excludedCurrencies: new Set(),
+        // Venezuela earns no entries (also on Prizerail's sanctions list).
+        // INR and BOB were excluded at launch and opened up in November 2026.
+        // Keep in step with the user app's list.
+        excludedCurrencies: new Set(['VEN']),
     },
     sandbox: {
         baseUrl: 'https://sandbox.prizerail.com/api/v1',
