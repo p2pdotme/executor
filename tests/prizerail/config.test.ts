@@ -43,14 +43,18 @@ describe('loadPrizerailConfig', () => {
         );
     });
 
-    test('no market is excluded on either site: INR, VEN and BOB earn entries like the rest', () => {
+    test('production excludes only VEN; INR and BOB earn entries like the rest', () => {
         const prod = loadPrizerailConfig({ ...VALID, PRIZERAIL_API_KEY: 'pr_prod_xyz' })!;
-        for (const code of ['INR', 'VEN', 'BOB', 'inr ', 'ARS', 'MEX', 'BRL', 'NGN', '']) {
+        for (const code of ['VEN', 'ven', ' ven ']) expect(isCurrencyExcluded(prod, code)).toBe(true);
+        for (const code of ['INR', 'BOB', 'inr ', 'ARS', 'MEX', 'BRL', 'NGN', '']) {
             expect(isCurrencyExcluded(prod, code)).toBe(false);
         }
-        expect(PRIZERAIL_SITES.prod.excludedCurrencies.size).toBe(0);
+        expect([...PRIZERAIL_SITES.prod.excludedCurrencies]).toEqual(['VEN']);
+    });
+
+    test('the sandbox excludes nothing, VEN included', () => {
         const sandbox = loadPrizerailConfig(VALID)!;
-        expect(isCurrencyExcluded(sandbox, 'INR')).toBe(false);
+        for (const code of ['VEN', 'INR', 'BOB']) expect(isCurrencyExcluded(sandbox, code)).toBe(false);
         expect(PRIZERAIL_SITES.sandbox.excludedCurrencies.size).toBe(0);
     });
 

@@ -72,7 +72,7 @@ The executor:
 2. **Order sweeper** — Every 1 minute: batch-checks all tracked orders via Multicall3, untracking completed/cancelled ones and auto-cancelling expired ones.
 3. **Order scanner** — Every 1 hour: rescans the last 2 500 blocks to catch any orders the WS listener may have missed.
 4. **B2B cashback programme** — Opt-in via env. Credits a bps cut of every completed non-B2B BUY or SELL back to the order's user (buyer for BUY, seller for SELL) via `cashbackIntegrator.issueCredit(user, amount)`, signed by a dedicated `cashback` wallet that must be whitelisted on the integrator (`setCreditIssuer(cashbackWallet, true)`).
-5. **Prizerail draw programme** — Opt-in via env. Same eligibility as the cashback programme (completed non-B2B BUY/SELL), but instead of credit the user earns entries into a [Prizerail](https://docs.prizerail.com/) prize draw: one entry per whole USDC (a $50 order = 50 entries) in every market, posted over HTTPS (no wallet, no tx). An optional scanner ledgers winners and posts them to Discord. See [Prizerail draw programme](#prizerail-draw-programme).
+5. **Prizerail draw programme** — Opt-in via env. Same eligibility as the cashback programme (completed non-B2B BUY/SELL), but instead of credit the user earns entries into a [Prizerail](https://docs.prizerail.com/) prize draw: one entry per whole USDC (a $50 order = 50 entries), with VEN excluded in production, posted over HTTPS (no wallet, no tx). An optional scanner ledgers winners and posts them to Discord. See [Prizerail draw programme](#prizerail-draw-programme).
 6. **Auto-funded wallets** — Five subwallets (toggle, assign, sweeper, cashback, keeper) are managed automatically. The funding wallet tops them up whenever any drops below the minimum balance. Discord alerts go to three dedicated channels (success / fail / balance).
 7. **Liveness probe** — `GET /healthz` and nothing else. There is no API.
 
@@ -259,7 +259,7 @@ eligible changes — only *what* they get.
 ```
 OrderCompleted (same filters as cashback: BUY/SELL, non-B2B, rate > 0)
   └─ cashback = amount × bps / 10 000            (per-currency bps via env, default 2%)
-  └─ entries  = whole USDC                       (0 for any market listed in the site's excludedCurrencies; none today)
+  └─ entries  = whole USDC                       (0 for the site's excluded markets: prod VEN)
   └─ enqueue SendPrizerailEntry  (jobId = prizerail-<orderId>)
        └─ prizerailEntryWorker
             ├─ entrantId = HMAC-SHA256(PRIZERAIL_ENTRANT_HMAC_KEY, wallet)
