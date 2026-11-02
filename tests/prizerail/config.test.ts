@@ -43,12 +43,25 @@ describe('loadPrizerailConfig', () => {
         );
     });
 
-    test('production excludes INR, VEN and BOB; the sandbox excludes nothing', () => {
+    test('production excludes only VEN; INR and BOB earn entries like the rest', () => {
         const prod = loadPrizerailConfig({ ...VALID, PRIZERAIL_API_KEY: 'pr_prod_xyz' })!;
-        for (const code of ['INR', 'VEN', 'BOB', 'inr ']) expect(isCurrencyExcluded(prod, code)).toBe(true);
-        for (const code of ['ARS', 'MEX', 'BRL', 'NGN', '']) expect(isCurrencyExcluded(prod, code)).toBe(false);
+        for (const code of ['VEN', 'ven', ' ven ']) expect(isCurrencyExcluded(prod, code)).toBe(true);
+        for (const code of ['INR', 'BOB', 'inr ', 'ARS', 'MEX', 'BRL', 'NGN', '']) {
+            expect(isCurrencyExcluded(prod, code)).toBe(false);
+        }
+        expect([...PRIZERAIL_SITES.prod.excludedCurrencies]).toEqual(['VEN']);
+    });
+
+    test('the sandbox excludes nothing, VEN included', () => {
         const sandbox = loadPrizerailConfig(VALID)!;
-        expect(isCurrencyExcluded(sandbox, 'INR')).toBe(false);
+        for (const code of ['VEN', 'INR', 'BOB']) expect(isCurrencyExcluded(sandbox, code)).toBe(false);
+        expect(PRIZERAIL_SITES.sandbox.excludedCurrencies.size).toBe(0);
+    });
+
+    test('isCurrencyExcluded still honours a site that lists markets', () => {
+        const site = { excludedCurrencies: new Set(['XYZ']) };
+        expect(isCurrencyExcluded(site, ' xyz ')).toBe(true);
+        expect(isCurrencyExcluded(site, 'INR')).toBe(false);
     });
 
     test('the campaign comes from the site, never from env', () => {
