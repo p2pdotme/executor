@@ -3,6 +3,7 @@ import { startOrderScannerSchedule } from './orderScanner';
 import { startDailyKeeperSchedule } from './dailyKeeper';
 import { startCircleRefreshSchedule } from './circleRefresh';
 import { startSettleClaimScannerSchedule } from './settleClaimScanner';
+import { startDisputeFinalizeScannerSchedule } from './disputeFinalizeScanner';
 import { startPrizerailPayoutScannerSchedule } from './prizerailPayoutScanner';
 import { ExecutorConfig } from '../helpers/config';
 
@@ -12,5 +13,6 @@ export async function startSchedulers(config: ExecutorConfig) {
     await startDailyKeeperSchedule();
     await startCircleRefreshSchedule();
     await startSettleClaimScannerSchedule(config);
+    await startDisputeFinalizeScannerSchedule();
     await startPrizerailPayoutScannerSchedule(config);
 }
