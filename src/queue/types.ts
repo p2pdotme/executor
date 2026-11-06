@@ -60,6 +60,16 @@ export type SettleClaimJobData = {
     claimId: string; // uint256 claimId as a decimal string
 };
 
+// FinalizeDispute job payload — the dispute finalize keeper (see
+// queue/workers/finalizeDispute.ts) calls finalizeDispute for one order whose
+// tier-1 / tier-2 decision has passed its appeal window. Same queue as
+// SettleClaim, for the same single-Keeper-consumer reason.
+export const FINALIZE_DISPUTE_JOB_NAME = 'FinalizeDispute';
+
+export type FinalizeDisputeJobData = {
+    orderId: string; // uint256 orderId as a decimal string
+};
+
 // Empty payload jobs if needed
 export type EmptyJobData = Record<string, never>;
 

@@ -9,7 +9,13 @@ import { safeSend } from '../../helpers/safeSend';
 import { sendOnFail, sendOnSuccess } from '../../helpers/alerts';
 import { WalletManager, WalletRole } from '../../helpers/walletManager';
 import { createSettleClaimHandler } from './settleClaimJob';
-import { SettleClaimJobData, SETTLE_CLAIM_JOB_NAME } from '../types';
+import { createFinalizeDisputeHandler } from './finalizeDispute';
+import {
+    SettleClaimJobData,
+    SETTLE_CLAIM_JOB_NAME,
+    FinalizeDisputeJobData,
+    FINALIZE_DISPUTE_JOB_NAME,
+} from '../types';
 
 // Subgraph fan-out (one orders query per active merchant) plus the on-chain
 // read validation can take a while, so give the daily job a long lock. Settle
@@ -299,9 +305,10 @@ async function runBlacklistInactive(diamond: Contract, config: ExecutorConfig): 
     return `job2: submitted ${submitted}/${list.length}`;
 }
 
-// Sole consumer of the Keeper wallet. Two job types share this queue:
+// Sole consumer of the Keeper wallet. Three job types share this queue:
 //   'DailyKeeper' / 'DailyKeeperStartup' — the 3-hourly run below.
 //   'SettleClaim'                        — one insurance settleClaim per job.
+//   'FinalizeDispute'                    — one dispute finalizeDispute per job.
 // They are NOT split across queues on purpose: both sign with the same Keeper
 // NonceManager, and safeSend's signer.reset() on a tx timeout clears the delta
 // for whoever else is mid-flight. concurrency:1 on ONE queue makes the Keeper
@@ -315,6 +322,7 @@ export function startDailyKeeperWorker(config: ExecutorConfig, walletManager: Wa
     // null when INSURANCE_DIAMOND_ADDRESS is unset — nothing enqueues settle
     // jobs in that case, so the branch below is unreachable.
     const settleClaim = createSettleClaimHandler(config, walletManager);
+    const finalizeDispute = createFinalizeDisputeHandler(config, walletManager);
 
     initDailyKeeperQueue();
 
@@ -327,6 +335,9 @@ export function startDailyKeeperWorker(config: ExecutorConfig, walletManager: Wa
                     return;
                 }
                 return settleClaim(job as Job<SettleClaimJobData>);
+            }
+            if (job.name === FINALIZE_DISPUTE_JOB_NAME) {
+                return finalizeDispute(job as Job<FinalizeDisputeJobData>);
             }
 
             logger.info('⏰ daily-keeper: run starting');
@@ -366,9 +377,13 @@ export function startDailyKeeperWorker(config: ExecutorConfig, walletManager: Wa
             logger.warn(`❌ keeper-queue: settle failed jobId=${job?.id} claimId=${(job?.data as SettleClaimJobData)?.claimId}: ${err?.message}`);
             return;
         }
+        if (job?.name === FINALIZE_DISPUTE_JOB_NAME) {
+            logger.warn(`❌ keeper-queue: finalize failed jobId=${job?.id} orderId=${(job?.data as FinalizeDisputeJobData)?.orderId}: ${err?.message}`);
+            return;
+        }
         logger.warn(`❌ daily-keeper: failed jobId=${job?.id} ${job?.name}: ${err?.message}`);
         await sendOnFail(config, `⏰ **Daily keeper run failed**\n↳ ${err?.message ?? err}`).catch(() => {});
     });
 
-    logger.info('⏰ keeper-queue: started (daily keeper + insurance settle)');
+    logger.info('⏰ keeper-queue: started (daily keeper + insurance settle + dispute finalize)');
 }

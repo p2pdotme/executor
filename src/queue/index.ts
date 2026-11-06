@@ -1,7 +1,13 @@
 import { Queue, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { ExecutorConfig } from '../helpers/config';
-import { ContractJobData, SettleClaimJobData, SETTLE_CLAIM_JOB_NAME } from './types';
+import {
+    ContractJobData,
+    SettleClaimJobData,
+    SETTLE_CLAIM_JOB_NAME,
+    FinalizeDisputeJobData,
+    FINALIZE_DISPUTE_JOB_NAME,
+} from './types';
 import { logger } from '../helpers/logger';
 
 export const TOGGLE_QUEUE_NAME = 'toggle-calls';
@@ -12,7 +18,7 @@ export const ORDER_SCANNER_QUEUE_NAME = 'order-scanner-calls';
 export const CASHBACK_QUEUE_NAME = 'cashback-calls';
 // Everything signed by the Keeper wallet. Carries BOTH the 3-hourly keeper run
 // ('DailyKeeper'/'DailyKeeperStartup') and the insurance settlement jobs
-// ('SettleClaim'). Deliberately one queue: its concurrency:1 worker is the only
+// ('SettleClaim') and the dispute finalize jobs ('FinalizeDispute'). Deliberately one queue: its concurrency:1 worker is the only
 // consumer of the shared Keeper NonceManager, so a settle can never interleave
 // with a keeper run and trip safeSend's signer.reset(). See dailyKeeperWorker.ts.
 export const DAILY_KEEPER_QUEUE_NAME = 'daily-keeper-calls';
@@ -22,6 +28,9 @@ export const CIRCLE_REFRESH_QUEUE_NAME = 'circle-refresh-calls';
 // keeper queue. Read-only (no tx, no wallet), so it keeps its own queue and can
 // run concurrently with a settle. See settleClaimScannerWorker.ts.
 export const SETTLE_CLAIM_SCANNER_QUEUE_NAME = 'settle-claim-scanner-calls';
+// Chain scan that schedules finalizeDispute jobs onto the keeper queue. Read-only
+// (no tx, no wallet), so it keeps its own queue. See disputeFinalizeScannerWorker.ts.
+export const DISPUTE_FINALIZE_SCANNER_QUEUE_NAME = 'dispute-finalize-scanner-calls';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
 export const connection = new IORedis(REDIS_URL, {
@@ -40,6 +49,7 @@ export let cashbackQueue: Queue<ContractJobData>;
 export let dailyKeeperQueue: Queue<any>;
 export let circleRefreshQueue: Queue<any>;
 export let settleClaimScannerQueue: Queue<any>;
+export let disputeFinalizeScannerQueue: Queue<any>;
 
 export function initToggleQueue(_config?: ExecutorConfig) {
     if (!toggleQueue) {
@@ -154,6 +164,24 @@ export function initSettleClaimScannerQueue() {
         logger.info(`queue: ${SETTLE_CLAIM_SCANNER_QUEUE_NAME} initialised`);
     }
     return settleClaimScannerQueue;
+}
+
+export function initDisputeFinalizeScannerQueue() {
+    if (!disputeFinalizeScannerQueue) {
+        disputeFinalizeScannerQueue = new Queue<any>(DISPUTE_FINALIZE_SCANNER_QUEUE_NAME, {
+            connection,
+            defaultJobOptions: {
+                removeOnComplete: true,
+                // Fixed jobIds (the startup one-shot): a retained failure would
+                // swallow the next restart's add. Same reason as the settle scanner.
+                removeOnFail: true,
+                attempts: 2,
+                backoff: { type: 'exponential', delay: 10000 },
+            },
+        });
+        logger.info(`queue: ${DISPUTE_FINALIZE_SCANNER_QUEUE_NAME} initialised`);
+    }
+    return disputeFinalizeScannerQueue;
 }
 
 export function initOrderScannerQueue() {
@@ -300,6 +328,33 @@ export async function addSettleClaimJob(
         );
     }
 
+    return job;
+}
+
+// Dispute finalizes ride the daily-keeper queue too (single Keeper consumer).
+// jobId = finalize-<orderId>-<appealableUntil> (finalizeJobId): the scanner
+// re-adds every pending dispute each tick, and a delayed or in-flight job with
+// that id is returned instead of a duplicate. The queue's removeOnFail:true lets
+// a failed one be re-added on the next tick.
+export async function addFinalizeDisputeJob(
+    data: FinalizeDisputeJobData,
+    opts: { delayMs: number; jobId: string },
+) {
+    const queue = initDailyKeeperQueue();
+    const job: Job<FinalizeDisputeJobData> = await queue.add(FINALIZE_DISPUTE_JOB_NAME, data, {
+        delay: opts.delayMs,
+        jobId: opts.jobId,
+        // The handler re-reads state and presims every run, so only transient
+        // RPC/nonce errors throw; retry those a few times.
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+    });
+    const state = await job.getState();
+    if (state === 'delayed' || state === 'waiting') {
+        logger.debug(`queue(${DAILY_KEEPER_QUEUE_NAME}): finalize job jobId= ${job.id} ${state} delayMs= ${opts.delayMs}`);
+    } else {
+        logger.info(`queue(${DAILY_KEEPER_QUEUE_NAME}): finalize job DEDUPED — jobId= ${job.id} already in state= ${state}`);
+    }
     return job;
 }
 
