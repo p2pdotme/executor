@@ -19,6 +19,14 @@ export type WinnerRow = {
     wallet: string | null;
     amountCents: number;
     heldForManualPayout: boolean;
+    publicityRequired: boolean;
+    publicityStatus: string | null;
+    publicityUrl: string | null;
+    fundingKind: string | null;
+    fundingStatus: string | null;
+    fundingTxHash: string | null;
+    // Why Prizerail has not released the prize yet; null = released.
+    releaseBlocked: string | null;
     payoutStatus: PayoutStatus;
     holdReason: string | null;
     alerted: boolean;
@@ -36,9 +44,14 @@ export type UpsertResult = {
     inserted: boolean;
     alerted: boolean;
     payoutStatus: PayoutStatus;
+    releaseBlocked: string | null;
+    // The prize went from blocked to released and nobody has been told yet.
+    releaseAlertDue: boolean;
 };
 
 type RawRow = Record<string, unknown>;
+
+const text = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
 
 function toRow(r: RawRow): WinnerRow {
     return {
@@ -52,6 +65,13 @@ function toRow(r: RawRow): WinnerRow {
         wallet: r.wallet === null ? null : String(r.wallet),
         amountCents: Number(r.amount_cents),
         heldForManualPayout: Boolean(r.held_for_manual_payout),
+        publicityRequired: Boolean(r.publicity_required),
+        publicityStatus: text(r.publicity_status),
+        publicityUrl: text(r.publicity_url),
+        fundingKind: text(r.funding_kind),
+        fundingStatus: text(r.funding_status),
+        fundingTxHash: text(r.funding_tx_hash),
+        releaseBlocked: text(r.release_blocked),
         payoutStatus: String(r.payout_status) as PayoutStatus,
         holdReason: r.hold_reason === null ? null : String(r.hold_reason),
         alerted: Boolean(r.alerted),
@@ -124,19 +144,40 @@ export class PrizerailStore {
      * been sent — take the amount Prizerail now reports, so a late-resolved
      * or approved row is paid what Prizerail says, not what it said first.
      * Terminal payout states (paying/paid/manual/failed) are never reopened
-     * or re-priced by a re-scan.
+     * or re-priced by a re-scan. Prizerail's release gate (publicity, funding
+     * transfer) is refreshed on every sighting until something has been sent.
      */
     async upsertWinner(campaign: string, r: WinnerRecord, decision: PayoutDecision): Promise<UpsertResult> {
         const res = await this.pool.query<RawRow>(
             `INSERT INTO prizerail_winners (
                 campaign, drawing_id, position, drawing_number, drawing_kind, drawing_status,
                 draw_at, entrant_id, wallet, amount_cents, held_for_manual_payout,
-                payout_status, hold_reason, recorded_at
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, to_timestamp($14 / 1000.0))
+                payout_status, hold_reason, recorded_at,
+                publicity_required, publicity_status, publicity_url,
+                funding_kind, funding_status, funding_tx_hash, release_blocked, release_checked_at
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, to_timestamp($14 / 1000.0),
+                       $15,$16,$17,$18,$19,$20,$21, now())
              ON CONFLICT (campaign, drawing_id, position) DO UPDATE SET
                 drawing_status = EXCLUDED.drawing_status,
                 wallet = COALESCE(prizerail_winners.wallet, EXCLUDED.wallet),
                 held_for_manual_payout = prizerail_winners.held_for_manual_payout OR EXCLUDED.held_for_manual_payout,
+                publicity_required = EXCLUDED.publicity_required,
+                publicity_status = EXCLUDED.publicity_status,
+                publicity_url = EXCLUDED.publicity_url,
+                funding_kind = EXCLUDED.funding_kind,
+                funding_status = EXCLUDED.funding_status,
+                funding_tx_hash = EXCLUDED.funding_tx_hash,
+                release_blocked = CASE
+                    WHEN prizerail_winners.payout_status IN ('pending', 'held', 'unresolved_entrant')
+                        THEN EXCLUDED.release_blocked
+                    ELSE prizerail_winners.release_blocked END,
+                -- due while released and untold; dropped again if Prizerail re-blocks it
+                release_alert_due = CASE
+                    WHEN prizerail_winners.payout_status IN ('pending', 'held', 'unresolved_entrant')
+                        THEN (prizerail_winners.release_alert_due OR prizerail_winners.release_blocked IS NOT NULL)
+                             AND EXCLUDED.release_blocked IS NULL
+                    ELSE prizerail_winners.release_alert_due END,
+                release_checked_at = now(),
                 amount_cents = CASE
                     WHEN prizerail_winners.payout_status IN ('pending', 'held', 'unresolved_entrant')
                         THEN EXCLUDED.amount_cents
@@ -145,16 +186,15 @@ export class PrizerailStore {
                     -- a wallet turned up for a previously unresolved entrant
                     WHEN prizerail_winners.payout_status = 'unresolved_entrant' AND EXCLUDED.wallet IS NOT NULL
                         THEN EXCLUDED.payout_status
-                    -- Prizerail put a hold on it, or the amount changed, before we paid
+                    -- the amount changed before we paid (a late Prizerail hold
+                    -- is covered by release_blocked, not by 'held')
                     WHEN prizerail_winners.payout_status = 'pending'
-                         AND (EXCLUDED.held_for_manual_payout OR EXCLUDED.amount_cents <> prizerail_winners.amount_cents)
+                         AND EXCLUDED.amount_cents <> prizerail_winners.amount_cents
                         THEN 'held'
                     ELSE prizerail_winners.payout_status END,
                 hold_reason = CASE
                     WHEN prizerail_winners.payout_status = 'unresolved_entrant' AND EXCLUDED.wallet IS NOT NULL
                         THEN EXCLUDED.hold_reason
-                    WHEN prizerail_winners.payout_status = 'pending' AND EXCLUDED.held_for_manual_payout
-                        THEN 'held by Prizerail for review (seen after first sighting)'
                     WHEN prizerail_winners.payout_status = 'pending' AND EXCLUDED.amount_cents <> prizerail_winners.amount_cents
                         THEN 'amount changed after first sighting: ' || prizerail_winners.amount_cents || 'c → ' || EXCLUDED.amount_cents || 'c'
                     WHEN prizerail_winners.payout_status = 'held' AND EXCLUDED.amount_cents <> prizerail_winners.amount_cents
@@ -164,11 +204,13 @@ export class PrizerailStore {
                 updated_at = now()
              -- xmax = 0 is true only for a freshly inserted row (no prior version);
              -- an ON CONFLICT update leaves the old tuple's xmax set.
-             RETURNING (xmax = 0) AS inserted, alerted, payout_status`,
+             RETURNING (xmax = 0) AS inserted, alerted, payout_status, release_blocked, release_alert_due`,
             [
                 campaign, r.drawingId, r.position, r.drawingNumber, r.drawingKind, r.drawingStatus,
                 r.drawAt, r.entrantId, r.wallet?.toLowerCase() ?? null, r.amountCents, r.heldForManualPayout,
                 decision.status, decision.reason, r.recordedAt,
+                r.publicityRequired, r.publicityStatus, r.publicityUrl,
+                r.fundingKind, r.fundingStatus, r.fundingTxHash, r.releaseBlocked,
             ],
         );
         const row = res.rows[0];
@@ -176,7 +218,17 @@ export class PrizerailStore {
             inserted: Boolean(row.inserted),
             alerted: Boolean(row.alerted),
             payoutStatus: String(row.payout_status) as PayoutStatus,
+            releaseBlocked: text(row.release_blocked),
+            releaseAlertDue: Boolean(row.release_alert_due),
         };
+    }
+
+    async markReleaseAlerted(campaign: string, drawingId: string, position: number): Promise<void> {
+        await this.pool.query(
+            `UPDATE prizerail_winners SET release_alert_due = false, updated_at = now()
+             WHERE campaign = $1 AND drawing_id = $2 AND position = $3`,
+            [campaign, drawingId, position],
+        );
     }
 
     async getWinner(campaign: string, drawingId: string, position: number): Promise<WinnerRow | null> {
@@ -201,6 +253,7 @@ export class PrizerailStore {
         const res = await this.pool.query<RawRow>(
             `${SELECT_ROW}
              WHERE campaign = $1 AND payout_status = 'pending' AND wallet IS NOT NULL
+               AND release_blocked IS NULL
              ORDER BY draw_at ASC, position ASC
              LIMIT $2`,
             [campaign, limit],
@@ -210,7 +263,10 @@ export class PrizerailStore {
 
     // ── payout state machine ────────────────────────────────────────────
 
-    /** pending → paying, only if still pending. Null means someone else has it. */
+    /**
+     * pending → paying, only if still pending and released by Prizerail.
+     * Null means someone else has it, or it is not payable (yet).
+     */
     async claimPayout(campaign: string, drawingId: string, position: number): Promise<WinnerRow | null> {
         const res = await this.pool.query<RawRow>(
             `WITH claimed AS (
@@ -218,6 +274,7 @@ export class PrizerailStore {
                 SET payout_status = 'paying', attempts = attempts + 1, updated_at = now(), send_nonce = NULL, tx_hash = NULL
                 WHERE campaign = $1 AND drawing_id = $2 AND position = $3
                   AND payout_status = 'pending' AND wallet IS NOT NULL
+                  AND release_blocked IS NULL
                 RETURNING *
              )
              SELECT ${ROW_COLUMNS} FROM claimed`,
@@ -285,7 +342,9 @@ export class PrizerailStore {
     async listNeedsAttention(campaign: string, limit: number): Promise<WinnerRow[]> {
         const res = await this.pool.query<RawRow>(
             `${SELECT_ROW}
-             WHERE campaign = $1 AND payout_status IN ('held', 'manual', 'failed', 'unresolved_entrant')
+             WHERE campaign = $1 AND (
+                    payout_status IN ('held', 'manual', 'failed', 'unresolved_entrant')
+                    OR (payout_status = 'pending' AND release_blocked IS NOT NULL))
              ORDER BY draw_at ASC, position ASC
              LIMIT $2`,
             [campaign, limit],

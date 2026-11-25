@@ -12,7 +12,7 @@ const LIST_LIMIT = 200;
 
 export const USAGE = `usage:
   list                                   rows that need a human
-  approve   <drawingId> <position>       held (over the cap) → pending; the worker pays it
+  approve   <drawingId> <position>       held (over the cap) → pending; the worker pays it once Prizerail releases it
   retry     <drawingId> <position>       failed (never sent) → pending
   mark-paid <drawingId> <position> <tx>  record a transfer sent by hand (verified on-chain)`;
 
@@ -56,21 +56,22 @@ async function list(d: ManualPayoutDeps): Promise<string[]> {
     return rows.map(
         (r) =>
             `${r.drawingId} #${r.position}  ${formatUsd(r.amountCents)}  ${r.payoutStatus}` +
-            `${r.heldForManualPayout ? ' (held by Prizerail)' : ''}  wallet=${r.wallet ?? '—'}` +
-            `${r.txHash ? `  tx=${r.txHash}` : ''}  ${r.holdReason ?? r.lastError ?? ''}`.trimEnd(),
+            `${r.releaseBlocked ? ` (not released: ${r.releaseBlocked})` : ''}  wallet=${r.wallet ?? '—'}` +
+            `${r.txHash ? `  tx=${r.txHash}` : ''}` +
+            `${r.publicityUrl ? `  share=${r.publicityUrl}` : ''}  ${r.holdReason ?? r.lastError ?? ''}`.trimEnd(),
     );
 }
 
 async function approve(d: ManualPayoutDeps, drawingId: string, position: number): Promise<string[]> {
     const row = await mustGet(d, drawingId, position);
     if (row.payoutStatus !== 'held') throw new Error(`${tag(row)} is ${row.payoutStatus}, not held`);
-    if (row.heldForManualPayout) {
-        throw new Error(`${tag(row)} is held by Prizerail (identity check / review) — resolve it in the Prizerail portal`);
-    }
     if (!row.wallet) throw new Error(`${tag(row)} has no wallet — nothing to pay to`);
     const ok = await d.store.approveHeld(d.campaign, drawingId, position, `approved for auto-pay by ${d.actor}`);
     if (!ok) throw new Error(`${tag(row)} changed while approving — run list again`);
-    return [`${tag(row)} approved: ${formatUsd(row.amountCents)} → ${row.wallet} is paid on the next scan (≤ 5 min)`];
+    const when = row.releaseBlocked
+        ? `is paid once Prizerail releases it (now: ${row.releaseBlocked})`
+        : 'is paid on the next scan (≤ 5 min)';
+    return [`${tag(row)} approved: ${formatUsd(row.amountCents)} → ${row.wallet} ${when}`];
 }
 
 async function retry(d: ManualPayoutDeps, drawingId: string, position: number): Promise<string[]> {

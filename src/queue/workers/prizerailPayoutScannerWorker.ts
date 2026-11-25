@@ -16,7 +16,7 @@ import { getPrizerailStore } from '../../prizerail/db';
 import { planPayout } from '../../prizerail/payout';
 import { PRIZERAIL_POLICY } from '../../prizerail/config';
 import type { PrizerailStore } from '../../prizerail/store';
-import { formatWinnersAlert, planWinnerRecords, splitDiscordMessage, WinnerRecord } from '../../prizerail/winners';
+import { formatReleaseAlert, formatWinnersAlert, planWinnerRecords, splitDiscordMessage, WinnerRecord } from '../../prizerail/winners';
 import type { PrizerailDrawing, PrizerailDrawingStatus } from '../../prizerail/types';
 import type { PrizerailConfig } from '../../prizerail/config';
 
@@ -67,6 +67,16 @@ async function alertWinners(ctx: Ctx, drawing: PrizerailDrawing, records: readon
     return true;
 }
 
+// A prize Prizerail was holding (winner share, separate transfer) is now
+// released. Cleared only once Discord took it, so a failed post is retried.
+async function alertReleased(ctx: Ctx, record: WinnerRecord, payoutStatus: string): Promise<boolean> {
+    const message = formatReleaseAlert(record, payoutStatus, ctx.prizerail.payoutEnabled);
+    logger.info(`prizerail-payout-scan: ${record.drawingId}#${record.position} released by Prizerail (${payoutStatus})`);
+    if (!(await trySendDiscordAlert(ctx.config.discordOnSuccessWebhookUrl, message))) return false;
+    await ctx.store.markReleaseAlerted(ctx.prizerail.campaignSlug, record.drawingId, record.position);
+    return true;
+}
+
 async function processDrawing(ctx: Ctx, drawing: PrizerailDrawing): Promise<void> {
     const slug = ctx.prizerail.campaignSlug;
     const wallets = await ctx.store.resolveEntrants(slug, drawing.winners.map((w) => w.winner));
@@ -75,12 +85,16 @@ async function processDrawing(ctx: Ctx, drawing: PrizerailDrawing): Promise<void
     const toAlert: WinnerRecord[] = [];
     const toPay: WinnerRecord[] = [];
     let fresh = 0;
+    let releaseAlertsOwed = 0;
+    let blocked = 0;
     for (const record of planned) {
         const decision = planPayout(record, PRIZERAIL_POLICY.maxAutoPayoutCents);
         const result = await ctx.store.upsertWinner(slug, record, decision);
         if (result.inserted) fresh += 1;
         if (!result.alerted) toAlert.push(record);
-        if (result.payoutStatus === 'pending') toPay.push(record);
+        if (result.payoutStatus === 'pending' && !result.releaseBlocked) toPay.push(record);
+        if (result.releaseBlocked) blocked += 1;
+        if (result.releaseAlertDue && !(await alertReleased(ctx, record, result.payoutStatus))) releaseAlertsOwed += 1;
     }
 
     if (toAlert.length > 0) {
@@ -99,7 +113,10 @@ async function processDrawing(ctx: Ctx, drawing: PrizerailDrawing): Promise<void
     if (ctx.prizerail.payoutEnabled) {
         for (const r of toPay) await addPrizerailPayoutJob({ campaign: slug, drawingId: r.drawingId, position: r.position });
     }
-    if (drawing.status === 'paid') await ctx.store.markDrawingDone(slug, drawing.id);
+    // A drawing with a prize Prizerail has not released yet, or with an
+    // undelivered release alert, is read again next tick: only a re-scan can
+    // clear release_blocked.
+    if (drawing.status === 'paid' && blocked === 0 && releaseAlertsOwed === 0) await ctx.store.markDrawingDone(slug, drawing.id);
 }
 
 // Catch-all: anything still pending in the ledger (a lost job, a released
@@ -136,8 +153,9 @@ async function runTick(ctx: Ctx): Promise<void> {
 /**
  * Winner discovery for the Prizerail programme. Reads settled and paid
  * drawings, maps each winner's entrant id back to a wallet, ledgers the
- * result in Postgres, posts it to Discord and, when payout is enabled,
- * queues each payable winner for the payout worker.
+ * result in Postgres (with Prizerail's release gate: winner share and the
+ * transfer that funds the prize), posts it to Discord and, when payout is
+ * enabled, queues each payable, released winner for the payout worker.
  */
 export function startPrizerailPayoutScannerWorker(config: ExecutorConfig): void {
     const prizerail = config.prizerail;

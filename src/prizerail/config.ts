@@ -72,7 +72,9 @@ export const PRIZERAIL_POLICY = {
     // prizes reach $600 within a calendar year, so six $100 wins would
     // reach it. That check is announced but not live; Prizerail currently
     // holds only a single prize at or over its large-prize threshold
-    // (heldForManualPayout, honoured in planPayout). When the yearly check
+    // (heldForManualPayout) or one that needs the winner to share first
+    // (publicity.required); both arrive as their own transfer and are
+    // gated in prizerail/release.ts, on top of this cap. When the yearly check
     // launches, confirm whether Prizerail flags the prize itself; if not,
     // add a per-wallet calendar-year hold to planPayout.
     maxAutoPayoutCents: 10_000,

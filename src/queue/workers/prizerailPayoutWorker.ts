@@ -137,6 +137,13 @@ export async function payWinner(d: PayoutDeps, data: PrizerailPayoutJobData): Pr
         return;
     }
 
+    // Prizerail has not released this prize (winner share outstanding, or its
+    // funding transfer is not confirmed). claimPayout enforces the same gate.
+    if (existing.releaseBlocked) {
+        logger.info(`prizerail-payout: ${tag} not released yet — ${existing.releaseBlocked}`);
+        return;
+    }
+
     const amount = centsToUsdc6(existing.amountCents);
     if (d.dryRun) {
         logger.info(`prizerail-payout[DRY_RUN]: would send ${usdcLabel(amount)} to ${existing.wallet} for ${tag}`);

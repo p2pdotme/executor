@@ -21,6 +21,13 @@ const record = (over: Partial<WinnerRecord> = {}): WinnerRecord => ({
     wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     amountCents: 1500,
     heldForManualPayout: false,
+    publicityRequired: false,
+    publicityStatus: null,
+    publicityUrl: null,
+    fundingKind: 'lump_sum',
+    fundingStatus: 'confirmed',
+    fundingTxHash: '0xfund',
+    releaseBlocked: null,
     payoutStatus: 'pending',
     recordedAt: 1_000,
     ...over,
@@ -85,14 +92,115 @@ run('PrizerailStore', () => {
         expect(row?.txHash).toBe('0xhash');
     });
 
-    test('a hold or amount change seen later parks a pending row', async () => {
-        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
-        await store.upsertWinner(SLUG, record({ heldForManualPayout: true }), { status: 'held', reason: 'held by Prizerail' });
-        let row = await store.getWinner(SLUG, 'd1', 0);
-        expect(row?.payoutStatus).toBe('held');
-        expect(row?.heldForManualPayout).toBe(true);
-        expect(row?.holdReason).toMatch(/after first sighting/);
+    const BLOCKED = {
+        heldForManualPayout: true,
+        publicityRequired: true,
+        publicityStatus: 'awaiting',
+        publicityUrl: 'https://prizerail.test/share/abc',
+        fundingKind: null,
+        fundingStatus: null,
+        fundingTxHash: null,
+        releaseBlocked: 'awaiting winner share (publicity awaiting)',
+    };
+    const RELEASED = {
+        heldForManualPayout: true,
+        publicityRequired: true,
+        publicityStatus: 'approved',
+        publicityUrl: null,
+        fundingKind: 'publicity_prize',
+        fundingStatus: 'confirmed',
+        fundingTxHash: '0xprize',
+        releaseBlocked: null,
+    };
 
+    test('a blocked prize is stored with its share link and cannot be listed or claimed', async () => {
+        const first = await store.upsertWinner(SLUG, record(BLOCKED), { status: 'pending', reason: null });
+        expect(first.releaseBlocked).toMatch(/awaiting winner share/);
+        expect(first.releaseAlertDue).toBe(false);
+        const row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row).toMatchObject({ publicityRequired: true, publicityStatus: 'awaiting', publicityUrl: BLOCKED.publicityUrl, payoutStatus: 'pending' });
+        expect(await store.listPayable(SLUG, 10)).toEqual([]);
+        expect(await store.claimPayout(SLUG, 'd1', 0)).toBeNull();
+        // ...but an operator can see it waiting.
+        expect((await store.listNeedsAttention(SLUG, 10)).map((r) => r.position)).toEqual([0]);
+    });
+
+    test('release: the gate clears, an alert falls due once, and the row becomes payable', async () => {
+        await store.upsertWinner(SLUG, record(BLOCKED), { status: 'pending', reason: null });
+        const released = await store.upsertWinner(SLUG, record(RELEASED), { status: 'pending', reason: null });
+        expect(released.releaseBlocked).toBeNull();
+        expect(released.releaseAlertDue).toBe(true);
+        // Still due on the next scan until Discord took it, then never again.
+        expect((await store.upsertWinner(SLUG, record(RELEASED), { status: 'pending', reason: null })).releaseAlertDue).toBe(true);
+        await store.markReleaseAlerted(SLUG, 'd1', 0);
+        expect((await store.upsertWinner(SLUG, record(RELEASED), { status: 'pending', reason: null })).releaseAlertDue).toBe(false);
+
+        const row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row).toMatchObject({ fundingKind: 'publicity_prize', fundingStatus: 'confirmed', fundingTxHash: '0xprize', publicityUrl: null });
+        expect((await store.listPayable(SLUG, 10)).map((r) => r.position)).toEqual([0]);
+        expect((await store.claimPayout(SLUG, 'd1', 0))?.payoutStatus).toBe('paying');
+    });
+
+    test('an over-cap prize approved while blocked is paid only after release', async () => {
+        const held = { status: 'held' as const, reason: 'amount 100000c above auto-payout cap 10000c' };
+        await store.upsertWinner(SLUG, record({ ...BLOCKED, amountCents: 100_000 }), held);
+        expect(await store.approveHeld(SLUG, 'd1', 0, 'approved by ops')).toBe(true);
+        // A re-scan with Prizerail still holding it keeps the approval and the block.
+        const again = await store.upsertWinner(SLUG, record({ ...BLOCKED, amountCents: 100_000 }), held);
+        expect(again.payoutStatus).toBe('pending');
+        expect(await store.claimPayout(SLUG, 'd1', 0)).toBeNull();
+
+        const released = await store.upsertWinner(SLUG, record({ ...RELEASED, amountCents: 100_000 }), held);
+        expect(released).toMatchObject({ payoutStatus: 'pending', releaseBlocked: null, releaseAlertDue: true });
+        expect((await store.claimPayout(SLUG, 'd1', 0))?.amountCents).toBe(100_000);
+    });
+
+    test('a released prize that Prizerail blocks again drops its pending release alert', async () => {
+        await store.upsertWinner(SLUG, record(BLOCKED), { status: 'pending', reason: null });
+        expect((await store.upsertWinner(SLUG, record(RELEASED), { status: 'pending', reason: null })).releaseAlertDue).toBe(true);
+        expect((await store.upsertWinner(SLUG, record(BLOCKED), { status: 'pending', reason: null })).releaseAlertDue).toBe(false);
+    });
+
+    test('rows that predate the gate are blocked at boot until a scan evaluates them', async () => {
+        const legacy = `UPDATE prizerail_winners SET release_checked_at = NULL, release_blocked = NULL WHERE campaign = $1`;
+        const raw = (store as unknown as { pool: { query: (q: string, p: unknown[]) => Promise<unknown> } }).pool;
+        // 0: pending, drawing still scanned · 1: Prizerail-held in a finished drawing · 2: pending in a finished drawing
+        await store.upsertWinner(SLUG, record({ position: 0 }), { status: 'pending', reason: null });
+        await store.upsertWinner(SLUG, record({ drawingId: 'done', position: 1, heldForManualPayout: true }), { status: 'held', reason: 'held by Prizerail for review' });
+        await store.upsertWinner(SLUG, record({ drawingId: 'done', position: 2 }), { status: 'pending', reason: null });
+        await store.markDrawingDone(SLUG, 'done');
+        await raw.query(legacy, [SLUG]);
+
+        await store.applySchema();
+        expect((await store.getWinner(SLUG, 'd1', 0))?.releaseBlocked).toMatch(/predates the release gate/);
+        expect((await store.getWinner(SLUG, 'done', 1))?.releaseBlocked).toMatch(/predates the release gate/);
+        expect((await store.getWinner(SLUG, 'done', 2))?.releaseBlocked).toBeNull();
+        expect(await store.claimPayout(SLUG, 'd1', 0)).toBeNull();
+
+        // The next scan evaluates the open drawing's row and it pays; boot never re-blocks it.
+        await store.upsertWinner(SLUG, record({ position: 0 }), { status: 'pending', reason: null });
+        await store.applySchema();
+        expect((await store.claimPayout(SLUG, 'd1', 0))?.payoutStatus).toBe('paying');
+    });
+
+    test('a Prizerail hold seen after first sighting blocks a pending row', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        await store.upsertWinner(SLUG, record(BLOCKED), { status: 'pending', reason: null });
+        const row = await store.getWinner(SLUG, 'd1', 0);
+        expect(row?.heldForManualPayout).toBe(true);
+        expect(await store.claimPayout(SLUG, 'd1', 0)).toBeNull();
+    });
+
+    test('once a transfer is in flight the gate is frozen', async () => {
+        await store.upsertWinner(SLUG, record(), { status: 'pending', reason: null });
+        await store.claimPayout(SLUG, 'd1', 0);
+        const res = await store.upsertWinner(SLUG, record(BLOCKED), { status: 'pending', reason: null });
+        expect(res.payoutStatus).toBe('paying');
+        expect(res.releaseBlocked).toBeNull();
+    });
+
+    test('an amount change seen later parks a pending row', async () => {
+        let row;
         await store.upsertWinner(SLUG, record({ position: 1 }), { status: 'pending', reason: null });
         await store.upsertWinner(SLUG, record({ position: 1, amountCents: 2500 }), { status: 'pending', reason: null });
         row = await store.getWinner(SLUG, 'd1', 1);
@@ -192,7 +300,7 @@ run('PrizerailStore', () => {
     test('listPayable returns only pending rows with a wallet, oldest first', async () => {
         await store.upsertWinner(SLUG, record({ position: 0, drawAt: '2026-11-03T17:00:00.000Z' }), { status: 'pending', reason: null });
         await store.upsertWinner(SLUG, record({ position: 1, drawAt: '2026-11-02T17:00:00.000Z' }), { status: 'pending', reason: null });
-        await store.upsertWinner(SLUG, record({ position: 2, heldForManualPayout: true }), { status: 'held', reason: 'held by prizerail' });
+        await store.upsertWinner(SLUG, record({ position: 2, amountCents: 100_000 }), { status: 'held', reason: 'above cap' });
         await store.upsertWinner(SLUG, record({ position: 3, wallet: null }), { status: 'unresolved_entrant', reason: 'x' });
         const rows = await store.listPayable(SLUG, 10);
         expect(rows.map((r) => r.position)).toEqual([1, 0]);

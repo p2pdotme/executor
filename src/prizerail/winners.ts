@@ -1,6 +1,7 @@
 import type { PrizerailDrawing } from './types';
 
 import type { PayoutStatus } from './payout';
+import { planRelease } from './release';
 
 // The planned status at discovery time; the ledger refines it (held, paying,
 // paid, …) — see prizerail/payout.ts.
@@ -17,6 +18,17 @@ export type WinnerRecord = {
     wallet: string | null;
     amountCents: number;
     heldForManualPayout: boolean;
+    // Prizerail's "share your win" step for this winner (see release.ts).
+    publicityRequired: boolean;
+    publicityStatus: string | null;
+    // The winner's private share link, for the app to show them.
+    publicityUrl: string | null;
+    // Prizerail's transfer to the prize wallet that funds this prize.
+    fundingKind: string | null;
+    fundingStatus: string | null;
+    fundingTxHash: string | null;
+    // Why the prize must not be paid yet; null once Prizerail released it.
+    releaseBlocked: string | null;
     payoutStatus: WinnerPayoutStatus;
     recordedAt: number;
 };
@@ -39,6 +51,7 @@ export function planWinnerRecords(
 ): WinnerRecord[] {
     return drawing.winners.map((w) => {
         const wallet = resolveWallet(w.winner);
+        const release = planRelease(drawing, w);
         return {
             drawingId: drawing.id,
             drawingNumber: drawing.number ?? null,
@@ -50,6 +63,13 @@ export function planWinnerRecords(
             wallet,
             amountCents: w.amountCents,
             heldForManualPayout: w.heldForManualPayout,
+            publicityRequired: release.publicityRequired,
+            publicityStatus: release.publicityStatus,
+            publicityUrl: release.publicityUrl,
+            fundingKind: release.fundingKind,
+            fundingStatus: release.fundingStatus,
+            fundingTxHash: release.fundingTxHash,
+            releaseBlocked: release.blocked,
             payoutStatus: wallet ? 'pending' : 'unresolved_entrant',
             recordedAt,
         };
@@ -72,7 +92,7 @@ export function formatWinnersAlert(
     const label = drawing.number === null || drawing.number === undefined ? drawing.id : `#${drawing.number}`;
     const lines = records.map((r) => {
         const flags = [
-            r.heldForManualPayout ? 'held by Prizerail' : null,
+            r.releaseBlocked,
             r.wallet ? null : 'unresolved entrant',
         ].filter(Boolean);
         const suffix = flags.length ? ` (${flags.join(', ')})` : '';
@@ -83,6 +103,20 @@ export function formatWinnersAlert(
         `drawAt: ${drawing.drawAt} · drawingId: ${drawing.id}`,
         ...lines,
     ].join('\n');
+}
+
+/** A prize Prizerail was holding has been released: say what happens next. */
+export function formatReleaseAlert(r: WinnerRecord, payoutStatus: string, payoutEnabled: boolean): string {
+    const funding = r.fundingTxHash ? `, ${r.fundingKind ?? 'transfer'} \`${r.fundingTxHash}\` confirmed` : '';
+    const share = r.publicityRequired ? 'winner share approved' : 'no share required';
+    const head = `🎟️ Prize released by Prizerail: ${formatUsd(r.amountCents)} → \`${r.wallet ?? r.entrantId}\` (draw ${r.drawingId} #${r.position}) — ${share}${funding}.`;
+    if (payoutStatus === 'pending') {
+        return `${head} ${payoutEnabled ? 'Paying it now.' : 'Automatic payout is off: pay it by hand and mark-paid.'}`;
+    }
+    if (payoutStatus === 'held') {
+        return `${head} Over the auto-pay cap: run \`prizerail:payout approve ${r.drawingId} ${r.position}\` to pay it from the prize wallet.`;
+    }
+    return `${head} Row is ${payoutStatus}: see \`prizerail:payout list\`.`;
 }
 
 /** Split a message on newlines into chunks that each fit the Discord limit. */

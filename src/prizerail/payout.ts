@@ -5,7 +5,7 @@
 export type PayoutStatus =
     | 'pending' // resolved wallet, under the cap: the worker may pay it
     | 'unresolved_entrant' // no wallet for the entrant id (map missing)
-    | 'held' // needs a human: Prizerail hold, over the cap, zero amount
+    | 'held' // needs a human: over the cap, zero amount
     | 'paying' // claimed by the worker; a transfer may be in flight
     | 'paid' // confirmed on-chain, tx_hash set
     | 'manual' // sent but unconfirmed/reverted: verify on-chain by hand
@@ -19,7 +19,6 @@ export type PayoutDecision = {
 export type PayoutCandidate = {
     wallet: string | null;
     amountCents: number;
-    heldForManualPayout: boolean;
 };
 
 // USDC has 6 decimals; one US cent is 10^4 base units.
@@ -27,16 +26,16 @@ const USDC_UNITS_PER_CENT = 10_000n;
 
 /**
  * Classify a winner for payout. `maxAutoPayoutCents` is the largest
- * unattended transfer: above it the prize stays with a human, which
- * also lines up with Prizerail's identity check for winners crossing the
- * large-prize threshold (default $600). A cap of 0 disables auto-payout.
+ * unattended transfer: above it the prize stays with a human until an
+ * operator approves it. A cap of 0 disables auto-payout.
+ *
+ * This is our own policy only. Whether Prizerail has released the prize
+ * (winner shared, funding transfer confirmed) is a separate gate, see
+ * prizerail/release.ts; a row is paid only when both allow it.
  */
 export function planPayout(candidate: PayoutCandidate, maxAutoPayoutCents: number): PayoutDecision {
     if (!candidate.wallet) {
         return { status: 'unresolved_entrant', reason: 'no wallet for entrant id' };
-    }
-    if (candidate.heldForManualPayout) {
-        return { status: 'held', reason: 'held by Prizerail for review' };
     }
     if (!Number.isInteger(candidate.amountCents) || candidate.amountCents <= 0) {
         return { status: 'held', reason: 'non-positive amount' };
