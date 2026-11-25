@@ -19,6 +19,7 @@ import type { PrizerailStore } from '../../prizerail/store';
 import { formatReleaseAlert, formatWinnersAlert, planWinnerRecords, splitDiscordMessage, WinnerRecord } from '../../prizerail/winners';
 import type { PrizerailDrawing, PrizerailDrawingStatus } from '../../prizerail/types';
 import type { PrizerailConfig } from '../../prizerail/config';
+import type { PrizerailPayoutJobData } from '../types';
 
 const LOCK_DURATION_MS = 180_000;
 const JOB_TIMEOUT_MS = 150_000;
@@ -34,7 +35,18 @@ const PAYABLE_BATCH = 200;
 // from the chain (see reconcileInFlight). Nothing else ever re-touches them.
 const STALE_PAYING_MS = 5 * 60_000;
 
-type Ctx = { config: ExecutorConfig; prizerail: PrizerailConfig; store: PrizerailStore; client: PrizerailClient };
+// Everything a scan tick touches, so tests can drive it with a fake
+// Prizerail and capture the alerts and the queued payout jobs.
+export type ScanCtx = {
+    prizerail: Pick<PrizerailConfig, 'campaignSlug' | 'payoutEnabled'>;
+    store: PrizerailStore;
+    client: Pick<PrizerailClient, 'listDrawings'>;
+    /** Success-channel post; false when Discord did not take it. */
+    alertSuccess: (message: string) => Promise<boolean>;
+    alertFail: (message: string) => Promise<void>;
+    enqueuePayout: (job: PrizerailPayoutJobData) => Promise<void>;
+};
+type Ctx = ScanCtx;
 type Fetched = { drawings: PrizerailDrawing[]; invalid: number };
 
 async function fetchPending(ctx: Ctx, status: PrizerailDrawingStatus): Promise<Fetched> {
@@ -62,7 +74,7 @@ async function fetchPending(ctx: Ctx, status: PrizerailDrawingStatus): Promise<F
 async function alertWinners(ctx: Ctx, drawing: PrizerailDrawing, records: readonly WinnerRecord[]): Promise<boolean> {
     const chunks = splitDiscordMessage(formatWinnersAlert(ctx.prizerail.campaignSlug, drawing, records));
     for (const chunk of chunks) {
-        if (!(await trySendDiscordAlert(ctx.config.discordOnSuccessWebhookUrl, chunk))) return false;
+        if (!(await ctx.alertSuccess(chunk))) return false;
     }
     return true;
 }
@@ -72,7 +84,7 @@ async function alertWinners(ctx: Ctx, drawing: PrizerailDrawing, records: readon
 async function alertReleased(ctx: Ctx, record: WinnerRecord, payoutStatus: string): Promise<boolean> {
     const message = formatReleaseAlert(record, payoutStatus, ctx.prizerail.payoutEnabled);
     logger.info(`prizerail-payout-scan: ${record.drawingId}#${record.position} released by Prizerail (${payoutStatus})`);
-    if (!(await trySendDiscordAlert(ctx.config.discordOnSuccessWebhookUrl, message))) return false;
+    if (!(await ctx.alertSuccess(message))) return false;
     await ctx.store.markReleaseAlerted(ctx.prizerail.campaignSlug, record.drawingId, record.position);
     return true;
 }
@@ -104,14 +116,13 @@ async function processDrawing(ctx: Ctx, drawing: PrizerailDrawing): Promise<void
         if (await alertWinners(ctx, drawing, toAlert)) await ctx.store.markAlerted(slug, toAlert);
         const unresolved = toAlert.filter((r) => !r.wallet);
         if (unresolved.length > 0) {
-            await sendOnFail(
-                ctx.config,
+            await ctx.alertFail(
                 `Prizerail drawing ${drawing.id}: ${unresolved.length} winner(s) have no wallet in the entrant map — check PRIZERAIL_ENTRANT_HMAC_KEY has not changed`,
             );
         }
     }
     if (ctx.prizerail.payoutEnabled) {
-        for (const r of toPay) await addPrizerailPayoutJob({ campaign: slug, drawingId: r.drawingId, position: r.position });
+        for (const r of toPay) await ctx.enqueuePayout({ campaign: slug, drawingId: r.drawingId, position: r.position });
     }
     // A drawing with a prize Prizerail has not released yet, or with an
     // undelivered release alert, is read again next tick: only a re-scan can
@@ -127,12 +138,12 @@ async function requeuePayable(ctx: Ctx): Promise<void> {
     const slug = ctx.prizerail.campaignSlug;
     const rows = await ctx.store.listPayable(slug, PAYABLE_BATCH);
     const stale = await ctx.store.listStalePaying(slug, STALE_PAYING_MS, PAYABLE_BATCH);
-    for (const r of [...rows, ...stale]) await addPrizerailPayoutJob({ campaign: r.campaign, drawingId: r.drawingId, position: r.position });
+    for (const r of [...rows, ...stale]) await ctx.enqueuePayout({ campaign: r.campaign, drawingId: r.drawingId, position: r.position });
     if (rows.length > 0) logger.info(`prizerail-payout-scan: ${rows.length} payable row(s) queued`);
     if (stale.length > 0) logger.warn(`prizerail-payout-scan: ${stale.length} stale 'paying' row(s) re-queued for reconciliation`);
 }
 
-async function runTick(ctx: Ctx): Promise<void> {
+export async function runScanTick(ctx: Ctx): Promise<void> {
     const seen = new Set<string>();
     let invalid = 0;
     for (const status of SCAN_STATUSES) {
@@ -146,7 +157,7 @@ async function runTick(ctx: Ctx): Promise<void> {
     }
     await requeuePayable(ctx);
     if (invalid > 0) {
-        await sendOnFail(ctx.config, `Prizerail scan: ${invalid} drawing(s) skipped as malformed — check the API shape against prizerail/types.ts`);
+        await ctx.alertFail(`Prizerail scan: ${invalid} drawing(s) skipped as malformed — check the API shape against prizerail/types.ts`);
     }
 }
 
@@ -166,17 +177,21 @@ export function startPrizerailPayoutScannerWorker(config: ExecutorConfig): void 
 
     initPrizerailPayoutScannerQueue();
     const ctx: Ctx = {
-        config,
         prizerail,
         store: getPrizerailStore(config),
         client: new PrizerailClient({ baseUrl: prizerail.baseUrl, apiKey: prizerail.apiKey, campaignSlug: prizerail.campaignSlug }),
+        alertSuccess: (message) => trySendDiscordAlert(config.discordOnSuccessWebhookUrl, message),
+        alertFail: (message) => sendOnFail(config, message),
+        enqueuePayout: async (job) => {
+            await addPrizerailPayoutJob(job);
+        },
     };
 
     const worker = new Worker(
         PRIZERAIL_PAYOUT_SCANNER_QUEUE_NAME,
         async () => {
             logger.info('prizerail-payout-scan: tick start');
-            await withTimeout(runTick(ctx), JOB_TIMEOUT_MS);
+            await withTimeout(runScanTick(ctx), JOB_TIMEOUT_MS);
             logger.info('prizerail-payout-scan: tick done');
         },
         { connection, concurrency: 1, lockDuration: LOCK_DURATION_MS },
