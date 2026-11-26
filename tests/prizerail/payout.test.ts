@@ -4,7 +4,6 @@ import { centsToUsdc6, planPayout } from '../../src/prizerail/payout';
 const base = {
     wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     amountCents: 1500,
-    heldForManualPayout: false,
 };
 
 describe('planPayout', () => {
@@ -17,12 +16,6 @@ describe('planPayout', () => {
             status: 'unresolved_entrant',
             reason: 'no wallet for entrant id',
         });
-    });
-
-    test('holds a prize Prizerail itself is holding for review', () => {
-        const d = planPayout({ ...base, heldForManualPayout: true }, 60_000);
-        expect(d.status).toBe('held');
-        expect(d.reason).toMatch(/prizerail/i);
     });
 
     test('pays a prize up to the cap and holds anything above it', () => {

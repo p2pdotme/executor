@@ -270,9 +270,10 @@ OrderCompleted (same filters as cashback: BUY/SELL, non-B2B, rate > 0)
 Every PRIZERAIL_POLICY.payoutScanIntervalMin (5 min) — prizerailPayoutScanner
   └─ GET /campaigns/<slug>/drawings?status=settled|paid
   └─ map each winner's entrantId → wallet via the reverse map
-  └─ INSERT prizerail_winners (campaign, drawing, position) ON CONFLICT → patch status / late wallet
-  └─ payout enabled? → queue PrizerailPayout for every 'pending' row
-  └─ Discord: winners, amounts, held-by-Prizerail flags, unresolved entrants
+  └─ release gate per winner: share approved? funding transfer confirmed?   (prizerail/release.ts)
+  └─ INSERT prizerail_winners (campaign, drawing, position) ON CONFLICT → patch status / late wallet / gate
+  └─ payout enabled? → queue PrizerailPayout for every 'pending' row Prizerail has released
+  └─ Discord: winners, amounts, not-yet-released reasons, unresolved entrants; a second alert on release
 ```
 
 **Payout.** Prizerail pays prize USDC to the campaign's payout wallet, not to
@@ -284,15 +285,15 @@ chain's USDC (`USDC_BY_CHAIN_ID`). The scanner runs whenever the programme is on
 scanner → ledger row (payout_status = pending | held | unresolved_entrant)
   └─ enqueue PrizerailPayout (jobId = campaign-drawing-position)
        └─ prizerailPayoutWorker (concurrency 1 — sole writer to the Prize nonce)
-            ├─ claimPayout: pending → paying  (at-most-once; a lost race is a no-op)
+            ├─ claimPayout: pending + released → paying  (at-most-once; a lost race is a no-op)
             ├─ USDC balanceOf(prize) ≥ amount? else release → pending, retry later
             ├─ safeSend usdc.transfer(wallet, amount)   onSent → tx_hash persisted
             ├─ confirmed → paid (+ Discord)   reverted/timeout → manual (verify on-chain)
             └─ retry finds 'paying' + tx_hash → reconcile from the receipt, never re-send
 ```
 
-Payout statuses: `pending` (will be paid), `held` (needs a human: Prizerail
-holds it, it is over the $100 cap in `PRIZERAIL_POLICY`, or zero),
+Payout statuses: `pending` (will be paid), `held` (needs a human: it is over
+the $100 cap in `PRIZERAIL_POLICY`, or zero),
 `unresolved_entrant` (no wallet in the map), `paying`, `paid`, `manual`
 (sent but unconfirmed/reverted), `failed` (never sent). Only `pending` is ever
 touched automatically; the rest wait for an operator in `prizerail_winners`.
@@ -308,6 +309,40 @@ whether Prizerail flags the prize itself; if not, a per-wallet yearly hold
 has to be added to `planPayout`. The cap, the scan interval and the
 prize-wallet balance floor are code constants in `src/prizerail/config.ts`
 (`PRIZERAIL_POLICY`) — product rules, changed with a review, not per deploy.
+
+**Release gate (winner share, separate transfers).** Our own payout status is
+only half of the decision. A prize is sent only when Prizerail has released
+it, which the scanner works out from the drawing on every tick
+(`src/prizerail/release.ts`) and stores in `release_blocked` (the reason it
+may not be paid yet; `NULL` = released):
+
+- **Winner share.** When `winner.publicity.required` is true (prizes of
+  $1,000 or more, e.g. the guaranteed draw), Prizerail does not release the
+  prize until `publicity.status` is `approved`. The winner's private share
+  link, `publicity.url`, is stored in `prizerail_winners.publicity_url`
+  (with `publicity_required` / `publicity_status`) next to the winner's
+  `wallet`, so the app can show it to them. It is deliberately kept out of
+  Discord; `prizerail:payout list` prints it for operators.
+- **Funding transfer.** Prizes Prizerail does not hold arrive in the drawing's
+  `lump_sum` transfer. A held prize (`heldForManualPayout`, or one that needs a
+  share) is **not** in the lump sum: it arrives as its own `payouts[]` row
+  (`large_prize` / `publicity_prize`) whose `winnerPosition` is the winner's
+  position. Each winner is matched to its own row first, else the lump sum,
+  and is paid only once that transfer is `confirmed`. A held prize is never
+  paid out of the lump sum. The matched transfer is kept in `funding_kind`,
+  `funding_status`, `funding_tx_hash`.
+
+`claimPayout` requires `release_blocked IS NULL`, so no path (scanner, a
+re-queued job, an operator `approve`) can send a prize early. The gate fails
+closed: a winner with no `publicity` block, or a held prize with no transfer
+row of its own, stays blocked, and a `paid` drawing is not marked done while
+any of its prizes is blocked. Unpaid rows written before the gate existed are
+blocked at boot until a scan evaluates them (rows Prizerail was holding in an
+already-finished drawing stay blocked: pay by hand and `mark-paid`). When a blocked
+prize becomes released the success channel gets a "Prize released by
+Prizerail" alert that says what happens next. The $100 cap still applies on
+top: the $1,000 prize is `held` until an operator runs `approve`, which can be
+done ahead of time — it is then paid on the first scan after release.
 
 **Storage.** The entrant map and the winner ledger live in Postgres
 (`DATABASE_URL`, schema applied at boot: `prizerail_entrants`,
@@ -371,8 +406,10 @@ first, and refuses if the row moved on in the meantime. Your OS user name (or
   queues it, and the payout worker sends the full amount from the prize wallet
   with the usual at-most-once checks. The cap is only applied when a winner is
   first recorded, so an approved row is not held again.
-- **`held` by Prizerail** (identity check, review; `list` shows it): `approve`
-  refuses. Resolve it in the Prizerail portal, then pay by hand.
+- **Not released by Prizerail** (`list` shows `not released: <reason>` — the
+  winner has not shared yet, or the prize's own transfer is not confirmed):
+  nothing to pay yet. `approve` is allowed and takes effect on release; the
+  worker will not send before that. `list` prints the winner's share link.
 - **Paid by hand** (any `held`, `manual` or `failed` row): send
   `amount_cents / 100` USDC from the prize wallet to the winner, then
   `mark-paid` with the tx hash. It records the row only if that transaction

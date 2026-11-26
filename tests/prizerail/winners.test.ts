@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatWinnersAlert, planWinnerRecords, splitDiscordMessage } from '../../src/prizerail/winners';
+import { formatReleaseAlert, formatWinnersAlert, planWinnerRecords, splitDiscordMessage } from '../../src/prizerail/winners';
 import type { PrizerailDrawing } from '../../src/prizerail/types';
 
 const drawing: PrizerailDrawing = {
@@ -8,12 +8,22 @@ const drawing: PrizerailDrawing = {
     kind: 'regular',
     drawAt: '2026-11-03T17:00:00Z',
     cutoffAt: '2026-11-03T16:30:00Z',
-    status: 'paid',
+    status: 'settled',
     winnersExpected: 3,
     winners: [
-        { position: 1, winner: 'ent-a', amountCents: 1500, heldForManualPayout: false },
-        { position: 2, winner: 'ent-b', amountCents: 100000, heldForManualPayout: true },
-        { position: 3, winner: 'ent-unknown', amountCents: 1000, heldForManualPayout: false },
+        { position: 1, winner: 'ent-a', amountCents: 1500, heldForManualPayout: false, publicity: { required: false, status: null, url: null } },
+        {
+            position: 2,
+            winner: 'ent-b',
+            amountCents: 100000,
+            heldForManualPayout: true,
+            publicity: { required: true, status: 'awaiting', url: 'https://prizerail.test/share/abc' },
+        },
+        { position: 3, winner: 'ent-unknown', amountCents: 1000, heldForManualPayout: false, publicity: { required: false, status: null, url: null } },
+    ],
+    payouts: [
+        { id: 'p1', kind: 'lump_sum', amountCents: 2500, status: 'confirmed', txHash: '0xlump', winnerPosition: null },
+        { id: 'p2', kind: 'publicity_prize', amountCents: 100000, status: 'held_publicity', txHash: null, winnerPosition: 2 },
     ],
 };
 
@@ -36,10 +46,25 @@ describe('planWinnerRecords', () => {
             wallet: wallets['ent-a'],
             amountCents: 1500,
             heldForManualPayout: false,
-            drawingStatus: 'paid',
+            drawingStatus: 'settled',
             payoutStatus: 'pending',
+            releaseBlocked: null,
+            fundingKind: 'lump_sum',
+            fundingTxHash: '0xlump',
             recordedAt: 1_000,
         });
+    });
+
+    test('carries the share link and the block for a prize Prizerail is holding', () => {
+        const held = planWinnerRecords(drawing, resolve, 1).find((r) => r.position === 2);
+        expect(held).toMatchObject({
+            publicityRequired: true,
+            publicityStatus: 'awaiting',
+            publicityUrl: 'https://prizerail.test/share/abc',
+            fundingKind: 'publicity_prize',
+            fundingStatus: 'held_publicity',
+        });
+        expect(held?.releaseBlocked).toMatch(/awaiting winner share/);
     });
 
     test('marks unresolved entrants so an operator can investigate', () => {
@@ -63,10 +88,34 @@ describe('formatWinnersAlert', () => {
         expect(msg).toContain('#12');
         expect(msg).toContain('$15.00');
         expect(msg).toContain('$1,000.00');
-        expect(msg).toContain('held');
+        expect(msg).toContain('awaiting winner share');
+        expect(msg).not.toContain('prizerail.test/share'); // the private link stays out of Discord
         expect(msg).toContain('unresolved');
         expect(msg).toContain(wallets['ent-a']);
         expect(msg).not.toContain('…');
+    });
+});
+
+describe('formatReleaseAlert', () => {
+    const released = {
+        ...planWinnerRecords(drawing, resolve, 1)[1],
+        publicityStatus: 'approved',
+        fundingStatus: 'confirmed',
+        fundingTxHash: '0xprize',
+        releaseBlocked: null,
+    };
+
+    test('an over-cap prize tells the operator the exact approve command', () => {
+        const msg = formatReleaseAlert(released, 'held', true);
+        expect(msg).toContain('$1,000.00');
+        expect(msg).toContain('winner share approved');
+        expect(msg).toContain('0xprize');
+        expect(msg).toContain('prizerail:payout approve d9 2');
+    });
+
+    test('a pending prize is announced as being paid, or by hand when payout is off', () => {
+        expect(formatReleaseAlert(released, 'pending', true)).toContain('Paying it now');
+        expect(formatReleaseAlert(released, 'pending', false)).toContain('by hand');
     });
 });
 

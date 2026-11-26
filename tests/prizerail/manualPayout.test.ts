@@ -20,6 +20,13 @@ function row(over: Partial<WinnerRow> = {}): WinnerRow {
         wallet: WALLET,
         amountCents: 5000,
         heldForManualPayout: false,
+        publicityRequired: false,
+        publicityStatus: null,
+        publicityUrl: null,
+        fundingKind: 'lump_sum',
+        fundingStatus: 'confirmed',
+        fundingTxHash: '0xfund',
+        releaseBlocked: null,
         payoutStatus: 'held',
         holdReason: 'amount 100000c above auto-payout cap 10000c',
         alerted: true,
@@ -85,8 +92,21 @@ describe('runManualPayout', () => {
         expect(f.calls).toEqual(['approve:approved for auto-pay by ops']);
     });
 
-    test('approve refuses a Prizerail hold, a missing wallet and a non-held row', async () => {
-        await expect(runManualPayout(['approve', 'd1', '0'], fake(row({ heldForManualPayout: true })).deps)).rejects.toThrow(/Prizerail/);
+    test('approve before Prizerail releases the prize is allowed and says it waits', async () => {
+        const f = fake(row({ heldForManualPayout: true, releaseBlocked: 'awaiting winner share (publicity awaiting)' }));
+        const out = await runManualPayout(['approve', 'd1', '0'], f.deps);
+        expect(f.calls).toEqual(['approve:approved for auto-pay by ops']);
+        expect(out.join('\n')).toMatch(/once Prizerail releases it \(now: awaiting winner share/);
+    });
+
+    test('list shows why a prize is not released and the winner share link', async () => {
+        const f = fake(row({ releaseBlocked: 'awaiting winner share (publicity awaiting)', publicityUrl: 'https://prizerail.test/share/abc' }));
+        const out = (await runManualPayout(['list'], f.deps)).join('\n');
+        expect(out).toContain('not released: awaiting winner share');
+        expect(out).toContain('share=https://prizerail.test/share/abc');
+    });
+
+    test('approve refuses a missing wallet and a non-held row', async () => {
         await expect(runManualPayout(['approve', 'd1', '0'], fake(row({ wallet: null })).deps)).rejects.toThrow(/wallet/);
         await expect(runManualPayout(['approve', 'd1', '0'], fake(row({ payoutStatus: 'manual' })).deps)).rejects.toThrow(/manual/);
         await expect(runManualPayout(['approve', 'd1', '0'], fake(null).deps)).rejects.toThrow(/no winner/);

@@ -18,6 +18,13 @@ function row(over: Partial<WinnerRow> = {}): WinnerRow {
         wallet: WALLET,
         amountCents: 1500,
         heldForManualPayout: false,
+        publicityRequired: false,
+        publicityStatus: null,
+        publicityUrl: null,
+        fundingKind: 'lump_sum',
+        fundingStatus: 'confirmed',
+        fundingTxHash: '0xfund',
+        releaseBlocked: null,
         payoutStatus: 'pending',
         holdReason: null,
         alerted: true,
@@ -112,6 +119,13 @@ describe('payWinner — happy path and guards', () => {
         await payWinner(f.deps, job);
         expect(f.calls).toEqual(['claim', 'nonce:7', 'send', 'hash:0xhash', 'paid:0xhash', 'ok:🎟️ Prize pa']);
         expect(f.state.row?.payoutStatus).toBe('paid');
+    });
+
+    test('a prize Prizerail has not released is never claimed or sent', async () => {
+        const f = fake(row({ releaseBlocked: 'awaiting Prizerail publicity_prize transfer (held_publicity)' }));
+        await payWinner(f.deps, job);
+        expect(f.calls).toEqual([]);
+        expect(f.state.row?.payoutStatus).toBe('pending');
     });
 
     test('dry run touches nothing', async () => {

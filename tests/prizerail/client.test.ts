@@ -186,6 +186,36 @@ describe('PrizerailClient drawings', () => {
         expect(calls[0].init.method).toBe('GET');
     });
 
+    test('parses winner publicity and the per-prize transfers', async () => {
+        const guarantee = {
+            ...DRAWING,
+            kind: 'guarantee',
+            status: 'settled',
+            winners: [
+                {
+                    position: 0,
+                    winner: 'aaa',
+                    amountCents: 100000,
+                    heldForManualPayout: true,
+                    publicity: { required: true, status: 'awaiting', url: 'https://prizerail.test/share/abc' },
+                },
+            ],
+            payouts: [{ id: 'p9', kind: 'publicity_prize', amountCents: 100000, status: 'held_publicity', txHash: null, winnerPosition: 0 }],
+        };
+        const { client } = makeClient([jsonResponse(200, { drawings: [guarantee], nextBefore: null })]);
+        const [d] = (await client.listDrawings({ status: 'settled' })).drawings;
+        expect(d.winners[0].publicity).toMatchObject({ required: true, status: 'awaiting', url: 'https://prizerail.test/share/abc' });
+        expect(d.payouts[0]).toMatchObject({ kind: 'publicity_prize', status: 'held_publicity', winnerPosition: 0 });
+    });
+
+    test('a publicity block it cannot read fails the drawing rather than reading as not required', async () => {
+        const odd = { ...DRAWING, winners: [{ position: 0, winner: 'aaa', amountCents: 100000, publicity: { required: 'yes' } }] };
+        const { client } = makeClient([jsonResponse(200, { drawings: [odd], nextBefore: null })]);
+        const page = await client.listDrawings({ status: 'settled' });
+        expect(page.drawings).toEqual([]);
+        expect(page.invalid).toBe(1);
+    });
+
     test('tolerates unknown extra fields and missing optional ones', async () => {
         const sparse = { ...DRAWING, winners: [{ position: 1, winner: 'x', amountCents: 10 }], extra: 1 };
         const { client } = makeClient([jsonResponse(200, { drawings: [sparse], nextBefore: null })]);
