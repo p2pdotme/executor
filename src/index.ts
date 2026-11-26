@@ -12,6 +12,7 @@ import { startCashbackWorker } from './queue/workers/cashbackWorker';
 import { startDailyKeeperWorker } from './queue/workers/dailyKeeperWorker';
 import { startCircleRefreshWorker } from './queue/workers/circleRefreshWorker';
 import { startSettleClaimScannerWorker } from './queue/workers/settleClaimScannerWorker';
+import { startDisputeFinalizeScannerWorker } from './queue/workers/disputeFinalizeScannerWorker';
 import { startPrizerailEntryWorker } from './queue/workers/prizerailEntryWorker';
 import { startPrizerailPayoutScannerWorker } from './queue/workers/prizerailPayoutScannerWorker';
 import { startPrizerailPayoutWorker } from './queue/workers/prizerailPayoutWorker';
@@ -95,11 +96,12 @@ async function start() {
     startOrderSweeperWorker(runConfig, walletManager);
     startOrderScannerWorker(runConfig);
     startCashbackWorker(runConfig, walletManager); // no-op when programme env unset
-    // Also consumes the insurance 'SettleClaim' jobs — same queue, same Keeper
+    // Also consumes the insurance 'SettleClaim' and dispute 'FinalizeDispute' jobs — same queue, same Keeper
     // wallet, one consumer. No-ops on settles when INSURANCE_DIAMOND_ADDRESS is unset.
     startDailyKeeperWorker(runConfig, walletManager);
     startCircleRefreshWorker(runConfig);
     startSettleClaimScannerWorker(runConfig); // no-op when INSURANCE_DIAMOND_ADDRESS unset
+    startDisputeFinalizeScannerWorker(runConfig); // skips ticks while the Diamond is pre-R8
     startPrizerailEntryWorker(runConfig); // no-op when PRIZERAIL_API_KEY unset or Postgres was down
     startPrizerailPayoutScannerWorker(runConfig); // no-op when PRIZERAIL_API_KEY unset or Postgres was down
     await startPrizerailPayoutWorker(runConfig, walletManager); // no-op unless PRIZE_PAYOUT_EXECUTOR set; never throws

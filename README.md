@@ -10,6 +10,7 @@
 - `autoCancelExpiredOrders`
 - `approveUnstakeBatch`
 - `blacklistInactiveMerchants`
+- `finalizeDispute` (executes a tier-1 / tier-2 dispute decision once its appeal window has passed)
 
 This means anyone in the community can run an executor to help operate the protocol. Running an executor does **not** grant any protocol privileges, and multiple operators can run simultaneously without coordination. If another executor has already processed a task, the transaction simply becomes a no-op during simulation.
 
@@ -181,7 +182,7 @@ All five are mandatory; the executor refuses to boot if any is missing.
 | `ASSIGN_EXECUTOR` | Private key for the assign wallet |
 | `ORDER_SWEEPER_EXECUTOR` | Private key for the sweeper wallet |
 | `CASHBACK_EXECUTOR` | Private key for the cashback wallet. Its address must be whitelisted on the cashback integrator via `setCreditIssuer(addr, true)` before `issueCredit` calls land — the startup Discord message prints the address explicitly so you know what to whitelist. |
-| `KEEPER_EXECUTOR` | Private key for the daily keeper wallet (`approveUnstakeBatch` + `blacklistInactiveMerchants`) |
+| `KEEPER_EXECUTOR` | Private key for the daily keeper wallet (`approveUnstakeBatch` + `blacklistInactiveMerchants`, insurance `settleClaim`, dispute `finalizeDispute`) |
 | `PRIZE_PAYOUT_EXECUTOR` | *Optional.* Prize wallet for Prizerail payouts; holds and sends USDC. Setting it turns automatic payouts on. USDC is resolved per chain in code. |
 
 ---
