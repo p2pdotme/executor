@@ -22,6 +22,48 @@ const PENDING_KEY = 'dispute-finalize:pending';
 // a DisputeDecided can be in. Override with DISPUTE_FINALIZE_FROM_BLOCK on
 // another chain. Only read when there is no cursor in Redis yet.
 const DEFAULT_FROM_BLOCK = 54_009_557;
+const SEED_PAGE = 1000;
+
+type SeedRow = { orderId: string };
+
+async function gql<T>(url: string, query: string, variables: Record<string, unknown>): Promise<T> {
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables }),
+    });
+    if (!res.ok) throw new Error(`subgraph HTTP ${res.status}`);
+    const json = (await res.json()) as { data?: T; errors?: unknown };
+    if (json.errors || !json.data) throw new Error(`subgraph errors: ${JSON.stringify(json.errors ?? 'empty data').slice(0, 300)}`);
+    return json.data;
+}
+
+// Orders whose tier-1/2 decision is still pending, all read at ONE block so the
+// cursor handed to the log scan matches what was seeded.
+export async function seedFromSubgraph(url: string): Promise<{ orderIds: string[]; block: number }> {
+    const { _meta } = await gql<{ _meta: { block: { number: number }; hasIndexingErrors: boolean } }>(
+        url,
+        '{ _meta { block { number } hasIndexingErrors } }',
+        {},
+    );
+    if (_meta.hasIndexingErrors) throw new Error('subgraph has indexing errors');
+    const block = Number(_meta.block.number);
+    const orderIds: string[] = [];
+    for (let after = '-1'; ; ) {
+        const { orders_collection: rows } = await gql<{ orders_collection: SeedRow[] }>(
+            url,
+            `query Seed($block: Int!, $after: BigInt!, $first: Int!) {
+                orders_collection(block: { number: $block }, first: $first, orderBy: orderId, orderDirection: asc,
+                    where: { disputeAppealableUntil_gt: "0", orderId_gt: $after }) { orderId }
+            }`,
+            { block, after, first: SEED_PAGE },
+        );
+        for (const r of rows) orderIds.push(String(r.orderId));
+        if (rows.length < SEED_PAGE) break;
+        after = String(rows[rows.length - 1].orderId);
+    }
+    return { orderIds, block };
+}
 
 // Finds tier-1 / tier-2 dispute decisions and schedules their finalizeDispute
 // jobs on the daily-keeper queue. Reads the chain, not the subgraph, and sends
@@ -67,6 +109,9 @@ export function startDisputeFinalizeScannerWorker(config: ExecutorConfig) {
             await addFinalizeDisputeJob({ orderId }, { jobId, delayMs });
         },
         nowMs: () => Date.now(),
+        seed: config.subgraphUrl ? () => withTimeout(seedFromSubgraph(config.subgraphUrl), RPC_TIMEOUT_MS * 3) : undefined,
+        onSeedError: (err) =>
+            logger.warn(`dispute-finalize-scanner: subgraph seed failed, replaying logs instead: ${redactError(err)}`),
     };
 
     const worker = new Worker(
@@ -82,6 +127,7 @@ export function startDisputeFinalizeScannerWorker(config: ExecutorConfig) {
             }
             const r = await withTimeout(runFinalizeScan(deps, fromBlock), JOB_TIMEOUT_MS);
             logger.info(
+                (r.seeded !== null ? `dispute-finalize-scanner: seeded ${r.seeded} pending decision(s) from the subgraph; ` : '') +
                 `dispute-finalize-scanner: scanned ${r.scanned ? `${r.scanned[0]}..${r.scanned[1]}` : 'nothing new'}, ${r.found} new decision(s); ` +
                     `${r.due.length} due, ${r.waiting.length} waiting, ${r.dropped.length} dropped`,
             );

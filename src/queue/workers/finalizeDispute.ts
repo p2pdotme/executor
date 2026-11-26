@@ -60,7 +60,17 @@ export type FinalizeScanDeps = {
     dropPending(orderId: string): Promise<void>;
     enqueue(orderId: string, jobId: string, delayMs: number): Promise<void>;
     nowMs(): number;
+    // Every order with a pending tier-1/2 decision, as of the subgraph's block.
+    // Used on first boot and after a long outage instead of replaying millions of
+    // blocks of logs (Base makes ~5 blocks/s). Optional: unset or throwing falls
+    // back to the log replay. getDisputeDecision is still re-read before any send,
+    // so a stale or wrong row costs one read, never a tx.
+    seed?(): Promise<{ orderIds: string[]; block: number }>;
+    onSeedError?(err: unknown): void;
 };
+
+// More than one tick of logs behind (or no cursor at all): seed from the subgraph.
+export const SEED_LAG_BLOCKS = SCAN_CHUNK_BLOCKS * MAX_CHUNKS_PER_TICK;
 
 export type FinalizeScanResult = {
     scanned: [number, number] | null;
@@ -68,11 +78,30 @@ export type FinalizeScanResult = {
     due: string[];
     waiting: string[];
     dropped: string[];
+    seeded: number | null;
 };
 
 export async function runFinalizeScan(deps: FinalizeScanDeps, fromBlock: number): Promise<FinalizeScanResult> {
     const to = (await deps.head()) - SCAN_CONFIRMATIONS;
-    const cursor = await deps.getCursor();
+    let cursor = await deps.getCursor();
+    let seeded: number | null = null;
+    if (deps.seed && (cursor === null || to - cursor > SEED_LAG_BLOCKS)) {
+        try {
+            const s = await deps.seed();
+            // Pending first, then the cursor, as in the replay below.
+            if (s.orderIds.length) await deps.addPending(s.orderIds);
+            // The logs take over from the subgraph's block, so a decision made
+            // after it is still found. Never move the cursor backwards.
+            const next = Math.min(s.block, to);
+            if (cursor === null || next > cursor) {
+                cursor = next;
+                await deps.setCursor(cursor);
+            }
+            seeded = s.orderIds.length;
+        } catch (err) {
+            deps.onSeedError?.(err);
+        }
+    }
     const first = cursor === null ? fromBlock : cursor + 1;
     let start = first;
     let found = 0;
@@ -95,6 +124,7 @@ export async function runFinalizeScan(deps: FinalizeScanDeps, fromBlock: number)
         due: [],
         waiting: [],
         dropped: [],
+        seeded,
     };
     const nowMs = deps.nowMs();
     const nowSec = Math.floor(nowMs / 1000);
